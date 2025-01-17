@@ -1,0 +1,2 @@
+npm install @groq/groq-sdk tailwindcss postcss autoprefixer -D @tailwindcss/typography
+npx tailwindcss init -p 
