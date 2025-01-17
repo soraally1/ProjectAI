@@ -110,22 +110,82 @@ const templates = {
   default: {
     name: 'Template Default',
     description: 'Template standar untuk BRD Bank Jateng',
-    fields: ['projectName', 'background', 'businessNeed', 'scope', 'inScope', 'outScope', 'objectives', 'stakeholders', 'functionalRequirements', 'nonFunctionalRequirements']
+    fields: [
+      'projectName',
+      'documentNumber',
+      'currentCondition',
+      'problems',
+      'problemImpact',
+      'mainNeeds',
+      'businessImpact',
+      'businessValue',
+      'mainObjective',
+      'specificObjectives',
+      'measurableTargets',
+      'scope',
+      'inScope',
+      'outScope',
+      'stakeholders',
+      'functionalRequirements',
+      'nonFunctionalRequirements'
+    ]
   },
   simplified: {
     name: 'Template Sederhana',
     description: 'Versi ringkas untuk proyek kecil',
-    fields: ['projectName', 'background', 'businessNeed', 'scope', 'objectives', 'functionalRequirements']
+    fields: [
+      'projectName',
+      'documentNumber',
+      'currentCondition',
+      'problems',
+      'mainNeeds',
+      'mainObjective',
+      'scope',
+      'functionalRequirements'
+    ]
   },
   detailed: {
     name: 'Template Detail',
     description: 'Versi lengkap untuk proyek besar',
-    fields: ['projectName', 'background', 'businessNeed', 'scope', 'inScope', 'outScope', 'objectives', 'stakeholders', 'functionalRequirements', 'nonFunctionalRequirements', 'assumptions', 'constraints', 'risks', 'success_criteria', 'timeline', 'budget']
+    fields: [
+      'projectName',
+      'documentNumber',
+      'currentCondition',
+      'problems',
+      'problemImpact',
+      'mainNeeds',
+      'businessImpact',
+      'businessValue',
+      'mainObjective',
+      'specificObjectives',
+      'measurableTargets',
+      'scope',
+      'inScope',
+      'outScope',
+      'stakeholders',
+      'functionalRequirements',
+      'nonFunctionalRequirements',
+      'assumptions',
+      'constraints',
+      'risks',
+      'success_criteria',
+      'timeline',
+      'budget'
+    ]
   },
   technical: {
     name: 'Template Teknis',
     description: 'Fokus pada aspek teknis',
-    fields: ['projectName', 'background', 'scope', 'functionalRequirements', 'nonFunctionalRequirements', 'technical_architecture', 'security_requirements', 'performance_requirements']
+    fields: [
+      'projectName',
+      'documentNumber',
+      'currentCondition',
+      'scope',
+      'functionalRequirements',
+      'nonFunctionalRequirements',
+      'assumptions',
+      'constraints'
+    ]
   }
 };
 
@@ -453,37 +513,38 @@ const Main = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
+    setFormData(prev => ({
       ...prev,
       [name]: value,
     }));
+    
+    // Clear validation error for this field when user types
+    if (validationErrors[name]) {
+      setValidationErrors(prev => ({
+        ...prev,
+        [name]: null
+      }));
+    }
   };
 
   const validateForm = () => {
     const errors = {};
-    const requiredFields = [
-      'projectName',
-      'background',
-      'businessNeed',
-      'scope',
-      'inScope',
-      'outScope',
-      'objectives',
-      'stakeholders',
-      'functionalRequirements',
-      'nonFunctionalRequirements'
-    ];
+    const templateConfig = templates[selectedTemplate];
+    
+    // Only validate fields required by the selected template
+    const requiredFields = templateConfig.fields;
 
     requiredFields.forEach(field => {
       if (!formData[field]?.trim()) {
-        errors[field] = 'This field is required';
+        errors[field] = 'Field ini wajib diisi';
       }
     });
 
-    // Additional validation rules
-    if (formData.projectName && formData.projectName.length < 3) {
-      errors.projectName = 'Project name must be at least 3 characters';
-    }
+    // Log validation results for debugging
+    console.log('Selected template:', selectedTemplate);
+    console.log('Required fields:', requiredFields);
+    console.log('Form data:', formData);
+    console.log('Validation errors:', errors);
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
@@ -570,20 +631,29 @@ Format: Start each section with "Section N:" and provide concise, relevant conte
   };
 
   const generateBRD = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      toast.error('Harap isi semua field yang diperlukan', {
+        position: "bottom-right",
+        autoClose: 3000
+      });
+      return;
+    }
     
     setLoading(true);
     try {
       const apiKey = import.meta.env.VITE_GROQ_API_KEY;
       if (!apiKey) {
-        throw new Error('Groq API key is not configured');
+        throw new Error('API key Groq tidak ditemukan. Pastikan environment variable VITE_GROQ_API_KEY telah dikonfigurasi di Netlify.');
       }
+
+      console.log('Memulai generate BRD...'); // Debug log
 
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
         body: JSON.stringify({
           model: "mixtral-8x7b-32768",
@@ -684,34 +754,57 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
           }],
           temperature: 0.7,
           max_tokens: 4000,
-        }),
+        })
       });
+
+      console.log('Response status:', response.status); // Debug log
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(`API request failed: ${response.status}${errorData.error ? ` - ${errorData.error.message}` : ''}`);
+        console.error('API Error:', errorData); // Debug log
+        throw new Error(`Gagal melakukan request ke API: ${response.status}${errorData.error ? ` - ${errorData.error.message}` : ''}`);
       }
 
       const data = await response.json();
+      console.log('Response received'); // Debug log
+
+      if (!data.choices?.[0]?.message?.content) {
+        console.error('Invalid response format:', data); // Debug log
+        throw new Error('Format response tidak valid dari API');
+      }
+
       const generatedContent = data.choices[0].message.content;
 
-      // Save the current version
-      const newVersion = {
-        id: Date.now(),
-        timestamp: new Date().toISOString(),
-        projectName: formData.projectName,
-        data: { ...formData },
-        generatedContent
-      };
+      // Save to localStorage
+      try {
+        const newVersion = {
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          projectName: formData.projectName,
+          data: { ...formData },
+          generatedContent
+        };
 
-      setVersions(prev => [newVersion, ...prev].slice(0, 10));
-      setLastSavedVersion(newVersion);
-      setGeneratedBRD(generatedContent);
+        // Save current form data
+        localStorage.setItem('brdFormData', JSON.stringify(formData));
+        
+        // Save versions
+        const currentVersions = JSON.parse(localStorage.getItem('brdVersions') || '[]');
+        const updatedVersions = [newVersion, ...currentVersions].slice(0, 10);
+        localStorage.setItem('brdVersions', JSON.stringify(updatedVersions));
 
-      toast.success('BRD berhasil dibuat!', {
-        position: "bottom-right",
-        autoClose: 3000
-      });
+        setVersions(updatedVersions);
+        setLastSavedVersion(newVersion);
+        setGeneratedBRD(generatedContent);
+
+        toast.success('BRD berhasil dibuat!', {
+          position: "bottom-right",
+          autoClose: 3000
+        });
+      } catch (storageError) {
+        console.error('Error saving to localStorage:', storageError);
+        // Continue even if storage fails
+      }
     } catch (error) {
       console.error('Error generating BRD:', error);
       toast.error(`Error: ${error.message}`, {
