@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Form Entry Informasi Pemohon</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        h1 {
+            text-align: center;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 15px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .save {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .exit {
+            background-color: #f44336;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Form Entry Informasi Pemohon</h1>
+
+<form id="infoForm">
+    <h2>INFORMASI PEMOHON</h2>
+    <label for="unitBisnis">Unit Bisnis:</label>
+    <input type="text" id="unitBisnis" name="unitBisnis" required>
+
+    <label for="nomorSurat">Nomor Surat/Contact Person:</label>
+    <input type="text" id="nomorSurat" name="nomorSurat" required>
+
+    <h2>INFORMASI DATA</h2>
+    <label for="aplikasi">Aplikasi yang dikembangkan:</label>
+    <input type="text" id="aplikasi" name="aplikasi" required>
+
+    <label for="fitur">Fitur yang ingin dikembangkan:</label>
+    <input type="text" id="fitur" name="fitur" required>
+
+    <label for="latarBelakang">Latar belakang Pengembangan:</label>
+    <textarea id="latarBelakang" name="latarBelakang" rows="4" required></textarea>
+
+    <label for="tujuan">Tujuan pengembangan:</label>
+    <textarea id="tujuan" name="tujuan" rows="4" required></textarea>
+
+    <label for="manfaat">Manfaat yang diharapkan:</label>
+    <textarea id="manfaat" name="manfaat" rows="4" required></textarea>
+
+    <label for="risiko">Risiko terkait bila Pengembangan tidak dilakukan:</label>
+    <textarea id="risiko" name="risiko" rows="4" required></textarea>
+
+    <label for="strategi">Strategi Pelaksanaan:</label>
+    <textarea id="strategi" name="strategi" rows="4" required></textarea>
+
+    <button type="submit" class="save">Save</button>
+    <button type="button" class="exit" onclick="exitForm()">Exit</button>
+</form>
+
+<script>
+    document.getElementById('infoForm').onsubmit = function(event) {
+        event.preventDefault();
+        alert('Informasi telah disimpan!');
+        // Tambahkan logika penyimpanan data di sini
+    };
+
+    function exitForm() {
+        if (confirm('Apakah Anda yakin ingin keluar?')) {
+            window.close(); // Menutup jendela (hanya berfungsi jika dibuka dengan window.open)
+        }
+    }
+</script>
+
+</body>
+</html>

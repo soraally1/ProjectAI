@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef } from 'react';
 import mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 import bankLogo from '../Bank_Jateng_logo.svg.png';
@@ -6,6 +6,8 @@ import { diffChars } from 'diff';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { createGlobalStyle } from 'styled-components';
+import { db, auth } from '../../firebase';
+import { collection, addDoc, serverTimestamp, query, orderBy, getDocs } from 'firebase/firestore';
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -17,11 +19,12 @@ const documentPreviewStyles = {
     line-height: 1.6;
     padding: 40px;
     background: white;
-    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
     border: 1px solid #e5e7eb;
     max-height: 800px;
     overflow-y: auto;
     position: relative;
+    border-radius: 12px;
   `,
   page: `
     max-width: 21cm;
@@ -111,85 +114,85 @@ const templates = {
     name: 'Template Default',
     description: 'Template standar untuk BRD Bank Jateng',
     fields: [
-      'projectName',
-      'documentNumber',
-      'currentCondition',
-      'problems',
-      'problemImpact',
-      'mainNeeds',
-      'businessImpact',
-      'businessValue',
-      'mainObjective',
-      'specificObjectives',
-      'measurableTargets',
-      'scope',
-      'inScope',
-      'outScope',
-      'stakeholders',
-      'functionalRequirements',
-      'nonFunctionalRequirements'
+      { name: 'projectName', label: 'Nama Proyek', required: true },
+      { name: 'documentNumber', label: 'Nomor Dokumen', required: true },
+      { name: 'currentCondition', label: 'Kondisi Saat Ini', required: true },
+      { name: 'problems', label: 'Permasalahan', required: true },
+      { name: 'problemImpact', label: 'Dampak Permasalahan', required: true },
+      { name: 'mainNeeds', label: 'Kebutuhan Utama', required: true },
+      { name: 'businessImpact', label: 'Dampak terhadap Proses Bisnis', required: true },
+      { name: 'businessValue', label: 'Nilai Bisnis', required: true },
+      { name: 'mainObjective', label: 'Tujuan Utama', required: true },
+      { name: 'specificObjectives', label: 'Tujuan Spesifik', required: true },
+      { name: 'measurableTargets', label: 'Target yang Terukur', required: true },
+      { name: 'scope', label: 'Ruang Lingkup', required: true },
+      { name: 'inScope', label: 'Yang Termasuk', required: true },
+      { name: 'outScope', label: 'Yang Tidak Termasuk', required: true },
+      { name: 'stakeholders', label: 'Pemangku Kepentingan', required: true },
+      { name: 'functionalRequirements', label: 'Kebutuhan Fungsional', required: true },
+      { name: 'nonFunctionalRequirements', label: 'Kebutuhan Non-Fungsional', required: true }
     ]
   },
   simplified: {
     name: 'Template Sederhana',
     description: 'Versi ringkas untuk proyek kecil',
     fields: [
-      'projectName',
-      'documentNumber',
-      'currentCondition',
-      'problems',
-      'mainNeeds',
-      'mainObjective',
-      'scope',
-      'functionalRequirements'
+      { name: 'projectName', label: 'Nama Proyek', required: true },
+      { name: 'documentNumber', label: 'Nomor Dokumen', required: true },
+      { name: 'currentCondition', label: 'Kondisi Saat Ini', required: true },
+      { name: 'problems', label: 'Permasalahan', required: true },
+      { name: 'mainNeeds', label: 'Kebutuhan Utama', required: true },
+      { name: 'mainObjective', label: 'Tujuan Utama', required: true },
+      { name: 'scope', label: 'Ruang Lingkup', required: true },
+      { name: 'functionalRequirements', label: 'Kebutuhan Fungsional', required: true }
     ]
   },
   detailed: {
     name: 'Template Detail',
     description: 'Versi lengkap untuk proyek besar',
     fields: [
-      'projectName',
-      'documentNumber',
-      'currentCondition',
-      'problems',
-      'problemImpact',
-      'mainNeeds',
-      'businessImpact',
-      'businessValue',
-      'mainObjective',
-      'specificObjectives',
-      'measurableTargets',
-      'scope',
-      'inScope',
-      'outScope',
-      'stakeholders',
-      'functionalRequirements',
-      'nonFunctionalRequirements',
-      'assumptions',
-      'constraints',
-      'risks',
-      'success_criteria',
-      'timeline',
-      'budget'
+      { name: 'projectName', label: 'Nama Proyek', required: true },
+      { name: 'documentNumber', label: 'Nomor Dokumen', required: true },
+      { name: 'currentCondition', label: 'Kondisi Saat Ini', required: true },
+      { name: 'problems', label: 'Permasalahan', required: true },
+      { name: 'problemImpact', label: 'Dampak Permasalahan', required: true },
+      { name: 'mainNeeds', label: 'Kebutuhan Utama', required: true },
+      { name: 'businessImpact', label: 'Dampak terhadap Proses Bisnis', required: true },
+      { name: 'businessValue', label: 'Nilai Bisnis', required: true },
+      { name: 'mainObjective', label: 'Tujuan Utama', required: true },
+      { name: 'specificObjectives', label: 'Tujuan Spesifik', required: true },
+      { name: 'measurableTargets', label: 'Target yang Terukur', required: true },
+      { name: 'scope', label: 'Ruang Lingkup', required: true },
+      { name: 'inScope', label: 'Yang Termasuk', required: true },
+      { name: 'outScope', label: 'Yang Tidak Termasuk', required: true },
+      { name: 'stakeholders', label: 'Pemangku Kepentingan', required: true },
+      { name: 'functionalRequirements', label: 'Kebutuhan Fungsional', required: true },
+      { name: 'nonFunctionalRequirements', label: 'Kebutuhan Non-Fungsional', required: true },
+      { name: 'assumptions', label: 'Asumsi', required: true },
+      { name: 'constraints', label: 'Batasan', required: true },
+      { name: 'risks', label: 'Risiko', required: true },
+      { name: 'success_criteria', label: 'Kriteria Keberhasilan', required: true },
+      { name: 'timeline', label: 'Jadwal', required: true },
+      { name: 'budget', label: 'Anggaran', required: true }
     ]
   },
   technical: {
     name: 'Template Teknis',
     description: 'Fokus pada aspek teknis',
     fields: [
-      'projectName',
-      'documentNumber',
-      'currentCondition',
-      'scope',
-      'functionalRequirements',
-      'nonFunctionalRequirements',
-      'assumptions',
-      'constraints'
+      { name: 'projectName', label: 'Nama Proyek', required: true },
+      { name: 'documentNumber', label: 'Nomor Dokumen', required: true },
+      { name: 'currentCondition', label: 'Kondisi Saat Ini', required: true },
+      { name: 'scope', label: 'Ruang Lingkup', required: true },
+      { name: 'functionalRequirements', label: 'Kebutuhan Fungsional', required: true },
+      { name: 'nonFunctionalRequirements', label: 'Kebutuhan Non-Fungsional', required: true },
+      { name: 'assumptions', label: 'Asumsi', required: true },
+      { name: 'constraints', label: 'Batasan', required: true }
     ]
   }
 };
 
-const FormField = ({ label, name, value, onChange, error, type = 'text', required = false }) => (
+const FormField = ({ label, name, value, onChange, error, type = 'text', required = false, placeholder }) => (
   <div className="mb-6">
     <label className="block text-sm font-medium text-[#00008B] mb-2">
       {label} {required && <span className="text-red-500">*</span>}
@@ -197,24 +200,24 @@ const FormField = ({ label, name, value, onChange, error, type = 'text', require
     {type === 'textarea' ? (
       <textarea
         name={name}
-        value={value}
+        value={value || ''}
         onChange={onChange}
         rows="4"
         className={`block w-full px-4 py-3 rounded-lg border ${
           error ? 'border-red-500' : 'border-gray-300'
         } shadow-sm focus:ring-2 focus:ring-[#00008B] focus:border-[#00008B] transition duration-150 ease-in-out resize-none`}
-        placeholder={`Masukkan ${label.toLowerCase()}`}
+        placeholder={placeholder || `Masukkan ${label.toLowerCase()}`}
       />
     ) : (
       <input
         type={type}
         name={name}
-        value={value}
+        value={value || ''}
         onChange={onChange}
         className={`block w-full px-4 py-3 rounded-lg border ${
           error ? 'border-red-500' : 'border-gray-300'
         } shadow-sm focus:ring-2 focus:ring-[#00008B] focus:border-[#00008B] transition duration-150 ease-in-out`}
-        placeholder={`Masukkan ${label.toLowerCase()}`}
+        placeholder={placeholder || `Masukkan ${label.toLowerCase()}`}
       />
     )}
     {error && (
@@ -251,7 +254,7 @@ const BrdPreviewStyles = createGlobalStyle`
   }
 `;
 
-const Main = () => {
+const Main = forwardRef(({ onBrdGenerated, initialData }, ref) => {
   const [formData, setFormData] = useState({
     projectName: '',
     documentNumber: '',
@@ -305,13 +308,104 @@ const Main = () => {
   const [editableContent, setEditableContent] = useState({});
   const [isEditing, setIsEditing] = useState(false);
 
-  // Load saved data from localStorage
-  useEffect(() => {
-    const savedData = localStorage.getItem('brdFormData');
-    if (savedData) {
-      setFormData(JSON.parse(savedData));
+  // Add new state for Firestore integration
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Function to save BRD to Firestore
+  const saveBrdToFirestore = async (brdData) => {
+    try {
+      setIsSaving(true);
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        throw new Error('User not authenticated');
+      }
+
+      const brdRef = collection(db, 'brds');
+      
+      // Extract formData and generatedContent from brdData
+      const { formData, generatedContent } = brdData;
+      
+      // Create a clean document structure
+      const docData = {
+        projectName: formData.projectName,
+        documentNumber: formData.documentNumber,
+        formData: {
+          ...formData,
+          timestamp: new Date().toISOString() // Use ISO string for nested timestamp
+        },
+        generatedContent,
+        userId: currentUser.uid,
+        userEmail: currentUser.email,
+        createdAt: serverTimestamp(),
+        lastModified: serverTimestamp(),
+        templateType: selectedTemplate,
+        status: 'draft',
+        version: versions.length + 1,
+        currentTurn: currentUser.uid
+      };
+
+      const docRef = await addDoc(brdRef, docData);
+      
+      toast.success('BRD berhasil disimpan ke database!', {
+        position: "bottom-right",
+        autoClose: 3000
+      });
+
+      return docRef.id;
+    } catch (error) {
+      console.error('Error saving BRD:', error);
+      if (error.message === 'User not authenticated') {
+        toast.error('Silakan login terlebih dahulu untuk menyimpan BRD', {
+          position: "bottom-right",
+          autoClose: 5000
+        });
+      } else {
+        toast.error('Gagal menyimpan BRD: ' + error.message, {
+          position: "bottom-right",
+          autoClose: 5000
+        });
+      }
+      throw error;
+    } finally {
+      setIsSaving(false);
     }
+  };
+
+  // Function to load BRDs from Firestore
+  const loadBrdsFromFirestore = async () => {
+    try {
+      const brdRef = collection(db, 'brds');
+      const q = query(brdRef, orderBy('createdAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+      
+      const loadedVersions = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().createdAt?.toDate().toISOString()
+      }));
+
+      setVersions(loadedVersions);
+    } catch (error) {
+      console.error('Error loading BRDs:', error);
+      toast.error('Gagal memuat riwayat BRD: ' + error.message);
+    }
+  };
+
+  // Load BRDs on component mount
+  useEffect(() => {
+    loadBrdsFromFirestore();
   }, []);
+
+  // Initialize form with provided data if available
+  useEffect(() => {
+    if (initialData) {
+      setFormData(prev => ({
+        ...prev,
+        ...initialData
+      }));
+    }
+  }, [initialData]);
 
   const loadPdfTemplate = async () => {
     try {
@@ -531,20 +625,11 @@ const Main = () => {
     const errors = {};
     const templateConfig = templates[selectedTemplate];
     
-    // Only validate fields required by the selected template
-    const requiredFields = templateConfig.fields;
-
-    requiredFields.forEach(field => {
-      if (!formData[field]?.trim()) {
-        errors[field] = 'Field ini wajib diisi';
+    templateConfig.fields.forEach(field => {
+      if (field.required && !formData[field.name]?.trim()) {
+        errors[field.name] = `${field.label} wajib diisi`;
       }
     });
-
-    // Log validation results for debugging
-    console.log('Selected template:', selectedTemplate);
-    console.log('Required fields:', requiredFields);
-    console.log('Form data:', formData);
-    console.log('Validation errors:', errors);
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
@@ -643,7 +728,7 @@ Format: Start each section with "Section N:" and provide concise, relevant conte
     try {
       const apiKey = import.meta.env.VITE_GROQ_API_KEY;
       if (!apiKey) {
-        throw new Error('API key Groq tidak ditemukan. Pastikan environment variable VITE_GROQ_API_KEY telah dikonfigurasi di Netlify.');
+        throw new Error('API key Groq tidak ditemukan');
       }
 
       console.log('Memulai generate BRD...'); // Debug log
@@ -775,36 +860,37 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
 
       const generatedContent = data.choices[0].message.content;
 
-      // Save to localStorage
-      try {
-        const newVersion = {
-          id: Date.now(),
-          timestamp: new Date().toISOString(),
-          projectName: formData.projectName,
-          data: { ...formData },
-          generatedContent
-        };
+      // Save to Firestore
+      const brdData = {
+        formData,
+        generatedContent,
+        projectName: formData.projectName,
+        documentNumber: formData.documentNumber
+      };
 
-        // Save current form data
-        localStorage.setItem('brdFormData', JSON.stringify(formData));
-        
-        // Save versions
-        const currentVersions = JSON.parse(localStorage.getItem('brdVersions') || '[]');
-        const updatedVersions = [newVersion, ...currentVersions].slice(0, 10);
-        localStorage.setItem('brdVersions', JSON.stringify(updatedVersions));
+      const docId = await saveBrdToFirestore(brdData);
 
-        setVersions(updatedVersions);
-        setLastSavedVersion(newVersion);
-        setGeneratedBRD(generatedContent);
+      // Update local state
+      const newVersion = {
+        id: docId,
+        timestamp: new Date().toISOString(),
+        projectName: formData.projectName,
+        data: { ...formData },
+        generatedContent
+      };
 
-        toast.success('BRD berhasil dibuat!', {
-          position: "bottom-right",
-          autoClose: 3000
-        });
-      } catch (storageError) {
-        console.error('Error saving to localStorage:', storageError);
-        // Continue even if storage fails
+      setVersions(prev => [newVersion, ...prev]);
+      setLastSavedVersion(newVersion);
+      setGeneratedBRD(generatedContent);
+
+      if (onBrdGenerated) {
+        onBrdGenerated(generatedContent);
       }
+
+      toast.success('BRD berhasil dibuat!', {
+        position: "bottom-right",
+        autoClose: 3000
+      });
     } catch (error) {
       console.error('Error generating BRD:', error);
       toast.error(`Error: ${error.message}`, {
@@ -1009,18 +1095,18 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
       const finalHtml = html.replace(bankLogo, base64Logo);
       
       const blob = new Blob(['\ufeff', finalHtml], {
-        type: 'application/msword'
-      });
+      type: 'application/msword'
+    });
 
-      // Create download link
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${formData.projectName || 'BRD'}.doc`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+    // Create download link
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${formData.projectName || 'BRD'}.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     };
   };
 
@@ -1044,8 +1130,8 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
     // Update form validation based on template requirements
     const newValidationErrors = {};
     templateConfig.fields.forEach(field => {
-      if (!formData[field]?.trim()) {
-        newValidationErrors[field] = 'This field is required for the selected template';
+      if (!formData[field.name]?.trim()) {
+        newValidationErrors[field.name] = `${field.label} wajib diisi`;
       }
     });
     setValidationErrors(newValidationErrors);
@@ -1055,9 +1141,9 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
     setShowTemplateDetails(true);
 
     // Auto-scroll to first required empty field
-    const firstEmptyField = templateConfig.fields.find(field => !formData[field]?.trim());
+    const firstEmptyField = templateConfig.fields.find(field => !formData[field.name]?.trim());
     if (firstEmptyField) {
-      document.getElementsByName(firstEmptyField)[0]?.scrollIntoView({ behavior: 'smooth' });
+      document.getElementsByName(firstEmptyField.name)[0]?.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -1150,9 +1236,9 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
           <h4 className="font-medium">Required Fields:</h4>
           <ul className="list-disc list-inside space-y-1">
             {selectedTemplateDetails.fields.map(field => (
-              <li key={field} className="text-gray-600">
-                {field}
-                {!formData[field]?.trim() && (
+              <li key={field.name} className="text-gray-600">
+                {field.label}
+                {!formData[field.name]?.trim() && (
                   <span className="text-red-500 ml-2">(not filled)</span>
                 )}
               </li>
@@ -1192,557 +1278,397 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#00008B]/5 via-white to-[#00008B]/5 py-12 px-4 sm:px-6 lg:px-8">
-      <BrdPreviewStyles />
-      <ToastContainer />
-      <VersionDiffModal />
-      <TemplateDetailsModal />
-      
-      {/* Header Section */}
-      <div className="max-w-7xl mx-auto mb-12 text-center">
-        <div className="flex justify-center mb-6">
-          <img src={bankLogo} alt="Bank Jateng Logo" className="h-16" />
-        </div>
-        <h1 className="text-3xl font-bold text-[#00008B] mb-4">
-          Sistem Pembuatan Dokumen Kebutuhan Bisnis
-        </h1>
-        <p className="text-gray-600 text-lg">
-          Divisi Digital & Development Innovation
-        </p>
-      </div>
-
-      {/* Template Selection */}
-      <div className="max-w-7xl mx-auto mb-8">
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-[#00008B]">Pilih Template</h2>
-            <button
-              onClick={() => setPreviewMode(!previewMode)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                previewMode
-                  ? 'bg-[#00008B] text-white'
-                  : 'bg-gray-100 text-[#00008B] hover:bg-gray-200'
-              }`}
-            >
-              {previewMode ? 'Mode Edit' : 'Mode Preview'}
-            </button>
+    <>
+      <div className="min-h-screen bg-gradient-to-br from-[#00008B]/10 via-white to-[#00008B]/5 py-12 px-4 sm:px-6 lg:px-8">
+        <BrdPreviewStyles />
+        <ToastContainer />
+        <VersionDiffModal />
+        <TemplateDetailsModal />
+        
+        {/* Enhanced Header Section */}
+        <div className="max-w-7xl mx-auto mb-12">
+          <div className="bg-white/50 backdrop-blur-sm rounded-2xl shadow-xl p-8 border border-white/20">
+            <div className="flex flex-col items-center">
+              <div className="relative mb-6">
+                <div className="absolute -inset-1 "></div>
+                <img src={bankLogo} alt="Bank Jateng Logo" className="relative h-20 w-auto" />
+              </div>
+              <h1 className="text-4xl font-bold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent mb-4 text-center">
+                Sistem Pembuatan Dokumen Kebutuhan Bisnis
+              </h1>
+              <p className="text-gray-600 text-lg font-medium">
+                Divisi Digital & Development Innovation
+              </p>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {Object.entries(templates).map(([key, template]) => (
-              <div
-                key={key}
-                className={`relative rounded-xl border-2 transition-all duration-200 ${
-                  selectedTemplate === key
-                    ? 'border-[#00008B] bg-[#00008B]/5'
-                    : 'border-gray-200 hover:border-[#00008B]/50'
+        </div>
+
+        {/* Enhanced Template Selection */}
+        <div className="max-w-7xl mx-auto mb-8">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-8 border border-white/20">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent">
+                Pilih Template
+              </h2>
+              <button
+                onClick={() => setPreviewMode(!previewMode)}
+                className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 ${
+                  previewMode
+                    ? 'bg-gradient-to-r from-[#00008B] to-[#4169E1] text-white shadow-lg shadow-blue-500/30'
+                    : 'bg-gray-100 text-[#00008B] hover:bg-gray-200'
                 }`}
               >
-                <button
-                  onClick={() => handleTemplateChange(key)}
-                  className="w-full p-4 text-left"
-                >
-                  <div className="flex flex-col h-full">
-                    <h3 className="font-medium mb-2 text-[#00008B]">{template.name}</h3>
-                    <p className="text-sm text-gray-600 mb-4">{template.description}</p>
-                    <div className="mt-auto">
-                      <span className="text-xs font-medium text-gray-500">
-                        {template.fields.length} field diperlukan
-                      </span>
-                    </div>
-                  </div>
-                </button>
-                {selectedTemplate === key && (
-                  <div className="absolute -top-2 -right-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#00008B] text-white">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                      </svg>
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Version History */}
-      {versions.length > 0 && (
-        <div className="max-w-7xl mx-auto mb-8">
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-lg font-semibold text-[#00008B]">Riwayat Hasil Generate</h2>
-                <p className="text-sm text-gray-500 mt-1">Menyimpan {versions.length} hasil generate terakhir</p>
-              </div>
+                {previewMode ? 'Mode Edit' : 'Mode Preview'}
+              </button>
             </div>
-            <div className="space-y-4">
-              {versions.map((version, index) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {Object.entries(templates).map(([key, template]) => (
                 <div
-                  key={version.id}
-                  className="flex items-center justify-between p-4 rounded-lg border border-gray-200 hover:bg-gray-50 transition-all duration-200"
+                  key={key}
+                  className={`relative rounded-2xl transition-all duration-300 transform hover:scale-[1.02] ${
+                    selectedTemplate === key
+                      ? 'bg-gradient-to-br from-[#00008B] to-[#4169E1] text-white shadow-lg shadow-blue-500/30'
+                      : 'bg-white border-2 border-gray-100 hover:border-[#00008B]/30 hover:shadow-lg'
+                  }`}
                 >
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <p className="font-medium text-[#00008B]">Generate #{versions.length - index}</p>
-                      {lastSavedVersion?.id === version.id && (
-                        <span className="px-2 py-1 text-xs font-medium text-[#00008B] bg-[#00008B]/10 rounded-full">
-                          Hasil Terbaru
+                  <button
+                    onClick={() => handleTemplateChange(key)}
+                    className="w-full p-6 text-left"
+                  >
+                    <div className="flex flex-col h-full">
+                      <h3 className={`font-semibold mb-3 ${
+                        selectedTemplate === key ? 'text-white' : 'text-[#00008B]'
+                      }`}>{template.name}</h3>
+                      <p className={`text-sm mb-4 ${
+                        selectedTemplate === key ? 'text-white/90' : 'text-gray-600'
+                      }`}>{template.description}</p>
+                      <div className="mt-auto">
+                        <span className={`text-xs font-medium px-3 py-1 rounded-full ${
+                          selectedTemplate === key
+                            ? 'bg-white/20 text-white'
+                            : 'bg-[#00008B]/5 text-[#00008B]'
+                        }`}>
+                          {template.fields.length} field diperlukan
                         </span>
-                      )}
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {new Date(version.timestamp).toLocaleString('id-ID', {
-                        weekday: 'long',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </p>
-                    <div className="mt-2">
-                      <span className="inline-flex items-center px-2 py-1 rounded-md bg-[#00008B]/5 text-[#00008B] text-xs">
-                        Proyek: {version.projectName || 'Untitled'}
+                  </button>
+                  {selectedTemplate === key && (
+                    <div className="absolute -top-2 -right-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[#00008B] shadow-lg">
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
                       </span>
                     </div>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => {
-                        setFormData(version.data);
-                        setGeneratedBRD(version.generatedContent);
-                        toast.success('Berhasil memuat hasil generate #' + (versions.length - index));
-                      }}
-                      className="px-4 py-2 text-sm font-medium rounded-lg bg-[#00008B] text-white hover:bg-[#00008B]/90 transition-colors duration-150"
-                    >
-                      Tampilkan
-                    </button>
-                    {index > 0 && (
-                      <button
-                        onClick={() => showVersionDiff(version, versions[index - 1])}
-                        className="px-4 py-2 text-sm font-medium rounded-lg border border-[#00008B] text-[#00008B] hover:bg-[#00008B]/5 transition-colors duration-150"
-                      >
-                        Bandingkan
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         </div>
-      )}
 
-      {/* Main Form Section */}
-      <div className="max-w-7xl mx-auto bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-        <div className="px-8 py-12">
-          <div className="max-w-3xl mx-auto">
-            {error && (
-              <div className="mb-8 bg-red-50 border-l-4 border-red-400 p-4 rounded-md">
-                <div className="flex">
-                  <div className="flex-shrink-0">
-                    <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-sm text-red-700">{error}</p>
-                  </div>
+        {/* Enhanced Version History */}
+        {versions.length > 0 && (
+          <div className="max-w-7xl mx-auto mb-8">
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-8 border border-white/20">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent">
+                    Riwayat Hasil Generate
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-2">
+                    Menyimpan {versions.length} hasil generate terakhir
+                  </p>
                 </div>
               </div>
-            )}
-
-            {/* Form Tabs */}
-            <div className="mb-8">
-              <div className="border-b border-gray-200">
-                <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-                  {['info', 'scope', 'requirements', 'planning'].map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={`${
-                        activeTab === tab
-                          ? 'border-[#00008B] text-[#00008B]'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-150`}
-                    >
-                      {tab === 'info' && 'Informasi Dasar'}
-                      {tab === 'scope' && 'Ruang Lingkup'}
-                      {tab === 'requirements' && 'Kebutuhan'}
-                      {tab === 'planning' && 'Perencanaan'}
-                    </button>
-                  ))}
-                </nav>
+              <div className="space-y-4">
+                {versions.map((version, index) => (
+                  <div
+                    key={version.id}
+                    className="flex items-center justify-between p-6 rounded-xl border border-gray-100 bg-white hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01]"
+                  >
+                    <div>
+                      <div className="flex items-center space-x-3">
+                        <p className="font-semibold text-[#00008B]">Generate #{versions.length - index}</p>
+                        {lastSavedVersion?.id === version.id && (
+                          <span className="px-3 py-1 text-xs font-medium text-[#00008B] bg-[#00008B]/10 rounded-full">
+                            Hasil Terbaru
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500 mt-2">
+                        {new Date(version.timestamp).toLocaleString('id-ID', {
+                          weekday: 'long',
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
+                      <div className="mt-3">
+                        <span className="inline-flex items-center px-3 py-1 rounded-full bg-[#00008B]/5 text-[#00008B] text-xs font-medium">
+                          Proyek: {version.projectName || 'Untitled'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex space-x-3">
+                      <button
+                        onClick={() => {
+                          setFormData(version.data);
+                          setGeneratedBRD(version.generatedContent);
+                          toast.success('Berhasil memuat hasil generate #' + (versions.length - index));
+                        }}
+                        className="px-5 py-2.5 text-sm font-medium rounded-xl bg-gradient-to-r from-[#00008B] to-[#4169E1] text-white hover:shadow-lg shadow-blue-500/30 transition-all duration-300"
+                      >
+                        Tampilkan
+                      </button>
+                      {index > 0 && (
+                        <button
+                          onClick={() => showVersionDiff(version, versions[index - 1])}
+                          className="px-5 py-2.5 text-sm font-medium rounded-xl border-2 border-[#00008B] text-[#00008B] hover:bg-[#00008B]/5 transition-all duration-300"
+                        >
+                          Bandingkan
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-
-              {/* Form Content - Keep existing form fields but update their styling */}
-              {activeTab === 'info' && (
-                <div className="grid grid-cols-1 gap-6 mt-6">
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Informasi Proyek</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <FormField
-                        label="Nama Proyek"
-                name="projectName"
-                value={formData.projectName}
-                onChange={handleInputChange}
-                        error={validationErrors.projectName}
-                        required
-                      />
-                      <FormField
-                        label="Nomor Dokumen"
-                        name="documentNumber"
-                        value={formData.documentNumber}
-                        onChange={handleInputChange}
-                        placeholder="BRD/DDI/2024/..."
-              />
             </div>
-                  </div>
+          </div>
+        )}
 
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Latar Belakang</h3>
-                    <div className="space-y-6">
-                      <FormField
-                        label="Kondisi Saat Ini"
-                        name="currentCondition"
-                        value={formData.currentCondition}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan kondisi atau sistem yang sedang berjalan saat ini..."
-                        required
-                      />
-                      <FormField
-                        label="Permasalahan"
-                        name="problems"
-                        value={formData.problems}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Uraikan permasalahan yang dihadapi pada kondisi saat ini..."
-                        required
-                      />
-                      <FormField
-                        label="Dampak Permasalahan"
-                        name="problemImpact"
-                        value={formData.problemImpact}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan dampak dari permasalahan tersebut terhadap bisnis..."
-                        required
-              />
-            </div>
-                  </div>
-
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Kebutuhan Bisnis</h3>
-                    <div className="space-y-6">
-                      <FormField
-                        label="Kebutuhan Utama"
-                        name="mainNeeds"
-                        value={formData.mainNeeds}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan kebutuhan utama yang harus dipenuhi..."
-                        required
-                      />
-                      <FormField
-                        label="Dampak terhadap Proses Bisnis"
-                        name="businessImpact"
-                        value={formData.businessImpact}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Uraikan dampak terhadap proses bisnis yang ada..."
-                        required
-                      />
-                      <FormField
-                        label="Nilai Bisnis"
-                        name="businessValue"
-                        value={formData.businessValue}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan nilai bisnis yang diharapkan..."
-                        required
-              />
-            </div>
-                  </div>
-
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Tujuan</h3>
-                    <div className="space-y-6">
-                      <FormField
-                        label="Tujuan Utama"
-                        name="mainObjective"
-                        value={formData.mainObjective}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan tujuan utama dari proyek ini..."
-                        required
-                      />
-                      <FormField
-                        label="Tujuan Spesifik"
-                        name="specificObjectives"
-                        value={formData.specificObjectives}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Uraikan tujuan-tujuan spesifik yang ingin dicapai..."
-                        required
-                      />
-                      <FormField
-                        label="Target yang Terukur"
-                        name="measurableTargets"
-                        value={formData.measurableTargets}
-                        onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Tentukan target-target yang terukur..."
-                        required
-                      />
+        {/* Enhanced Main Form Section */}
+        <div className="max-w-7xl mx-auto bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-white/20 overflow-hidden">
+          <div className="px-8 py-12">
+            <div className="max-w-3xl mx-auto">
+              {error && (
+                <div className="mb-8 bg-red-50 border-l-4 border-red-400 p-6 rounded-xl">
+                  <div className="flex">
+                    <div className="flex-shrink-0">
+                      <svg className="h-6 w-6 text-red-400" viewBox="0 0 24 24" fill="currentColor">
+                        <path fillRule="evenodd" d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm-1.5-5.5l-4-4 1.5-1.5L11 14l6.5-6.5 1.5 1.5-8 8z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <div className="ml-4">
+                      <p className="text-sm text-red-700">{error}</p>
                     </div>
                   </div>
                 </div>
               )}
 
-              {activeTab === 'scope' && (
-                <div className="grid grid-cols-1 gap-6 mt-6">
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Ruang Lingkup</h3>
-                    <div className="space-y-6">
-                      <FormField
-                        label="Ruang Lingkup Umum"
-                name="scope"
-                value={formData.scope}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan cakupan umum dari proyek ini..."
-                        required
-                      />
-                      <FormField
-                        label="Yang Termasuk dalam Ruang Lingkup"
-                name="inScope"
-                value={formData.inScope}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Uraikan fitur dan fungsi yang akan dikembangkan..."
-                        required
-                      />
-                      <FormField
-                        label="Yang Tidak Termasuk dalam Ruang Lingkup"
-                name="outScope"
-                value={formData.outScope}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Sebutkan batasan dan area yang tidak tercakup..."
-                        required
-              />
-            </div>
-            </div>
+              {/* Enhanced Form Tabs */}
+              <div className="mb-8">
+                <div className="border-b border-gray-200">
+                  <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+                    {['info', 'scope', 'requirements', 'planning'].map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className={`${
+                          activeTab === tab
+                            ? 'border-[#00008B] text-[#00008B]'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-all duration-300`}
+                      >
+                        {tab === 'info' && 'Informasi Dasar'}
+                        {tab === 'scope' && 'Ruang Lingkup'}
+                        {tab === 'requirements' && 'Kebutuhan'}
+                        {tab === 'planning' && 'Perencanaan'}
+                      </button>
+                    ))}
+                  </nav>
+                </div>
 
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Pemangku Kepentingan</h3>
-                    <FormField
-                      label="Pemangku Kepentingan"
-                name="stakeholders"
-                value={formData.stakeholders}
-                onChange={handleInputChange}
-                      type="textarea"
-                      placeholder="Identifikasi unit/divisi terkait beserta peran dan tanggung jawabnya..."
-                      required
-              />
-            </div>
-          </div>
-              )}
-
-              {activeTab === 'requirements' && (
-                <div className="grid grid-cols-1 gap-6 mt-6">
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Kebutuhan Fungsional</h3>
-                    <FormField
-                      label="Kebutuhan Fungsional"
-                name="functionalRequirements"
-                value={formData.functionalRequirements}
-                onChange={handleInputChange}
-                      type="textarea"
-                      placeholder="Jelaskan kebutuhan fungsional utama dan detail fungsi yang diperlukan..."
-                      required
-              />
-            </div>
-
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Kebutuhan Non-Fungsional</h3>
-                    <FormField
-                      label="Kebutuhan Non-Fungsional"
-                name="nonFunctionalRequirements"
-                value={formData.nonFunctionalRequirements}
-                onChange={handleInputChange}
-                      type="textarea"
-                      placeholder="Jelaskan kebutuhan terkait performa, keamanan, ketersediaan sistem..."
-                      required
-              />
-            </div>
-
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Asumsi dan Batasan</h3>
-                    <div className="space-y-6">
-                      <FormField
-                        label="Asumsi"
-                name="assumptions"
-                value={formData.assumptions}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Jelaskan asumsi-asumsi terkait bisnis, teknis, dan sumber daya..."
-                      />
-                      <FormField
-                        label="Batasan"
-                name="constraints"
-                value={formData.constraints}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Uraikan batasan teknis, bisnis, dan regulasi..."
-              />
-            </div>
+                {/* Form Content */}
+                {activeTab === 'info' && (
+                  <div className="grid grid-cols-1 gap-8 mt-8">
+                    {templates[selectedTemplate].fields
+                      .filter(field => ['projectName', 'documentNumber', 'currentCondition', 'problems', 'problemImpact', 'mainNeeds', 'businessImpact', 'businessValue', 'mainObjective', 'specificObjectives', 'measurableTargets'].includes(field.name))
+                      .map(field => (
+                        <div key={field.name} className="bg-white p-8 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-300">
+                          <h3 className="text-lg font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent mb-6">
+                            {field.label}
+                          </h3>
+                          <FormField
+                            label={field.label}
+                            name={field.name}
+                            value={formData[field.name]}
+                            onChange={handleInputChange}
+                            error={validationErrors[field.name]}
+                            type={['projectName', 'documentNumber'].includes(field.name) ? 'text' : 'textarea'}
+                            required={field.required}
+                          />
+                        </div>
+                      ))}
                   </div>
-                </div>
-              )}
+                )}
 
-              {activeTab === 'planning' && (
-                <div className="grid grid-cols-1 gap-6 mt-6">
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Risiko</h3>
-                    <FormField
-                      label="Risiko"
-                name="risks"
-                value={formData.risks}
-                onChange={handleInputChange}
-                      type="textarea"
-                      placeholder="Identifikasi risiko, dampak potensial, dan mitigasi yang diusulkan..."
-              />
-            </div>
+                {activeTab === 'scope' && (
+                  <div className="grid grid-cols-1 gap-8 mt-8">
+                    {templates[selectedTemplate].fields
+                      .filter(field => ['scope', 'inScope', 'outScope', 'stakeholders'].includes(field.name))
+                      .map(field => (
+                        <div key={field.name} className="bg-white p-8 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-300">
+                          <h3 className="text-lg font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent mb-6">
+                            {field.label}
+                          </h3>
+                          <FormField
+                            label={field.label}
+                            name={field.name}
+                            value={formData[field.name]}
+                            onChange={handleInputChange}
+                            error={validationErrors[field.name]}
+                            type="textarea"
+                            required={field.required}
+                          />
+                        </div>
+                      ))}
+                  </div>
+                )}
 
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Kriteria Keberhasilan</h3>
-                    <FormField
-                      label="Kriteria Keberhasilan"
-                name="success_criteria"
-                value={formData.success_criteria}
-                onChange={handleInputChange}
-                      type="textarea"
-                      placeholder="Tentukan kriteria keberhasilan bisnis, teknis, dan metrik pengukuran..."
-              />
-            </div>
+                {activeTab === 'requirements' && (
+                  <div className="grid grid-cols-1 gap-8 mt-8">
+                    {templates[selectedTemplate].fields
+                      .filter(field => ['functionalRequirements', 'nonFunctionalRequirements', 'assumptions', 'constraints'].includes(field.name))
+                      .map(field => (
+                        <div key={field.name} className="bg-white p-8 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-300">
+                          <h3 className="text-lg font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent mb-6">
+                            {field.label}
+                          </h3>
+                          <FormField
+                            label={field.label}
+                            name={field.name}
+                            value={formData[field.name]}
+                            onChange={handleInputChange}
+                            error={validationErrors[field.name]}
+                            type="textarea"
+                            required={field.required}
+                          />
+                        </div>
+                      ))}
+                  </div>
+                )}
 
-                  <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-[#00008B] mb-4">Jadwal dan Anggaran</h3>
-                    <div className="space-y-6">
-                      <FormField
-                        label="Jadwal"
-                name="timeline"
-                value={formData.timeline}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Uraikan tahapan utama, milestone penting, dan estimasi waktu..."
-                      />
-                      <FormField
-                        label="Anggaran"
-                name="budget"
-                value={formData.budget}
-                onChange={handleInputChange}
-                        type="textarea"
-                        placeholder="Rincian estimasi biaya, alokasi anggaran, dan sumber pendanaan..."
-              />
+                {activeTab === 'planning' && (
+                  <div className="grid grid-cols-1 gap-8 mt-8">
+                    {templates[selectedTemplate].fields
+                      .filter(field => ['risks', 'success_criteria', 'timeline', 'budget'].includes(field.name))
+                      .map(field => (
+                        <div key={field.name} className="bg-white p-8 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-300">
+                          <h3 className="text-lg font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent mb-6">
+                            {field.label}
+                          </h3>
+                          <FormField
+                            label={field.label}
+                            name={field.name}
+                            value={formData[field.name]}
+                            onChange={handleInputChange}
+                            error={validationErrors[field.name]}
+                            type="textarea"
+                            required={field.required}
+                          />
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-                </div>
-              )}
-        </div>
 
-            {/* Action Buttons */}
-            <div className="mt-8 flex justify-between items-center">
-              <div className="flex items-center space-x-4">
+          {/* Enhanced Action Buttons */}
+          <div className="mt-8 flex justify-between items-center px-8 pb-8">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={generateBRD}
+                disabled={loading}
+                className="inline-flex items-center px-8 py-3 rounded-xl text-base font-medium text-white bg-gradient-to-r from-[#00008B] to-[#4169E1] hover:shadow-lg shadow-blue-500/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02]"
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Sedang Membuat...
+                  </>
+                ) : (
+                  'Buat BRD'
+                )}
+              </button>
+            </div>
             <button
-              onClick={generateBRD}
-              disabled={loading}
-                  className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-[#00008B] hover:bg-[#00008B]/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00008B] shadow-lg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => setFormData({
+                projectName: '',
+                documentNumber: '',
+                currentCondition: '',
+                problems: '',
+                problemImpact: '',
+                mainNeeds: '',
+                businessImpact: '',
+                businessValue: '',
+                mainObjective: '',
+                specificObjectives: '',
+                measurableTargets: '',
+                background: '',
+                businessNeed: '',
+                scope: '',
+                inScope: '',
+                outScope: '',
+                objectives: '',
+                stakeholders: '',
+                functionalRequirements: '',
+                nonFunctionalRequirements: '',
+                assumptions: '',
+                constraints: '',
+                risks: '',
+                success_criteria: '',
+                timeline: '',
+                budget: '',
+                approvers: ''
+              })}
+              className="inline-flex items-center px-6 py-3 border-2 border-gray-300 rounded-xl text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hover:border-[#00008B]/30 transition-all duration-300"
             >
-              {loading ? (
-                <>
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Sedang Membuat...
-                </>
-              ) : (
-                'Buat BRD'
-              )}
+              Bersihkan Form
             </button>
           </div>
-          <button
-            onClick={() => setFormData({
-              projectName: '',
-                  documentNumber: '',
-                  currentCondition: '',
-                  problems: '',
-                  problemImpact: '',
-                  mainNeeds: '',
-                  businessImpact: '',
-                  businessValue: '',
-                  mainObjective: '',
-                  specificObjectives: '',
-                  measurableTargets: '',
-              background: '',
-              businessNeed: '',
-              scope: '',
-              inScope: '',
-              outScope: '',
-              objectives: '',
-              stakeholders: '',
-              functionalRequirements: '',
-              nonFunctionalRequirements: '',
-              assumptions: '',
-              constraints: '',
-              risks: '',
-              success_criteria: '',
-              timeline: '',
-              budget: '',
-              approvers: ''
-            })}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00008B] transition-all duration-150"
-          >
-            Bersihkan Form
-          </button>
         </div>
-          </div>
-                  </div>
-                  </div>
+      </div>
 
+      {/* Enhanced Generated BRD Preview */}
       {generatedBRD && (
-        <div className="max-w-7xl mx-auto mt-8">
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-            <div className="px-8 py-6">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-[#00008B]">Hasil Generate BRD</h2>
+        <div className="max-w-7xl mx-auto mt-8 mb-12">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-white/20 overflow-hidden">
+            <div className="px-8 py-8">
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-xl font-semibold bg-gradient-to-r from-[#00008B] to-[#4169E1] bg-clip-text text-transparent">
+                  Hasil Generate BRD
+                </h2>
                 <div className="flex space-x-3">
-            <button
+                  <button
                     onClick={() => setIsEditing(!isEditing)}
-                    className="px-4 py-2 text-sm font-medium rounded-lg border border-[#00008B] text-[#00008B] hover:bg-[#00008B]/5 transition-colors duration-150"
-            >
+                    className="px-5 py-2.5 text-sm font-medium rounded-xl border-2 border-[#00008B] text-[#00008B] hover:bg-[#00008B]/5 transition-all duration-300"
+                  >
                     {isEditing ? 'Batal Edit' : 'Edit Dokumen'}
-            </button>
+                  </button>
                   {isEditing && (
-            <button
+                    <button
                       onClick={saveEditedContent}
-                      className="px-4 py-2 text-sm font-medium rounded-lg bg-[#00008B] text-white hover:bg-[#00008B]/90 transition-colors duration-150"
+                      className="px-5 py-2.5 text-sm font-medium rounded-xl bg-gradient-to-r from-[#00008B] to-[#4169E1] text-white hover:shadow-lg shadow-blue-500/30 transition-all duration-300"
                     >
                       Simpan Perubahan
-            </button>
+                    </button>
                   )}
-            <button
-              onClick={exportToWord}
-                    className="px-4 py-2 text-sm font-medium rounded-lg bg-[#00008B] text-white hover:bg-[#00008B]/90 transition-colors duration-150"
-            >
-              Ekspor ke Word
-            </button>
-          </div>
-        </div>
+                  <button
+                    onClick={exportToWord}
+                    className="px-5 py-2.5 text-sm font-medium rounded-xl bg-gradient-to-r from-[#00008B] to-[#4169E1] text-white hover:shadow-lg shadow-blue-500/30 transition-all duration-300"
+                  >
+                    Ekspor ke Word
+                  </button>
+                </div>
+              </div>
 
               <div className="brd-preview prose max-w-none">
                 <div className="brd-document" style={{
@@ -1804,7 +1730,7 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
                       month: 'long',
                       year: 'numeric'
                     })}</p>
-            </div>
+                  </div>
 
                   <div className="brd-content" style={{
                     whiteSpace: 'pre-wrap',
@@ -1820,8 +1746,10 @@ Berikan konten yang sangat detail dan profesional untuk setiap bagian.`
           </div>
         </div>
       )}
-    </div>
+    </>
   );
-};
+});
+
+Main.displayName = 'Main';
 
 export default Main;
