@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { collection, query, where, orderBy, onSnapshot, Timestamp, getDocs, updateDoc, doc } from 'firebase/firestore';
 import logo from '../assets/i-BRDSystem.svg';
 
 const DashboardLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { profile } = useUser();
+  const { user, profile } = useUser();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(true);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -18,6 +23,208 @@ const DashboardLayout = () => {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // Subscribe to notifications
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    setIsLoadingNotifications(true);
+    let unsubscribeCallbacks = [];
+
+    const setupNotificationSubscriptions = async () => {
+      try {
+        // Query for all BRD requests where user is involved (either as assignee or requester)
+        const [assignedRequestsSnapshot, requestedRequestsSnapshot] = await Promise.all([
+          getDocs(query(
+            collection(db, 'brd_requests'),
+            where('assignedTo', '==', user.uid)
+          )),
+          getDocs(query(
+            collection(db, 'brd_requests'),
+            where('requesterId', '==', user.uid)
+          ))
+        ]);
+
+        const allRequests = [...assignedRequestsSnapshot.docs, ...requestedRequestsSnapshot.docs];
+        const uniqueRequestIds = [...new Set(allRequests.map(doc => doc.id))];
+        const requestsData = allRequests.reduce((acc, doc) => {
+          acc[doc.id] = doc.data();
+          return acc;
+        }, {});
+
+        // Subscribe to comments for each request
+        uniqueRequestIds.forEach(requestId => {
+          const commentsQuery = query(
+            collection(db, 'brd_requests', requestId, 'comments'),
+            orderBy('timestamp', 'desc'),
+            where('timestamp', '>=', Timestamp.fromDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))) // Last 7 days
+          );
+
+          const unsubscribe = onSnapshot(commentsQuery, async (commentsSnapshot) => {
+            const newNotifications = commentsSnapshot.docs
+              .filter(doc => doc.data().userId !== user.uid)
+              .map(doc => ({
+                id: `comment_${doc.id}`,
+                requestId: requestId,
+                requestName: requestsData[requestId]?.namaProject || 'Unknown Project',
+                type: 'comment',
+                userName: doc.data().userName || 'Unknown User',
+                message: doc.data().text,
+                timestamp: doc.data().timestamp?.toDate() || new Date(),
+                read: doc.data().read || false,
+                userId: doc.data().userId
+              }));
+
+            updateNotifications(newNotifications);
+          });
+
+          unsubscribeCallbacks.push(unsubscribe);
+        });
+
+        // Subscribe to status updates
+        const statusUnsubscribe = onSnapshot(
+          query(
+            collection(db, 'brd_requests'),
+            where('requesterId', '==', user.uid),
+            orderBy('lastUpdated', 'desc')
+          ),
+          (statusSnapshot) => {
+            const statusNotifications = statusSnapshot.docs
+              .filter(doc => {
+                const data = doc.data();
+                const lastUpdated = data.lastUpdated?.toDate() || new Date();
+                const isRecent = lastUpdated > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                return isRecent && (data.status === 'approved' || data.status === 'rejected' || data.status === 'revision');
+              })
+              .map(doc => {
+                const data = doc.data();
+                return {
+                  id: `status_${doc.id}`,
+                  requestId: doc.id,
+                  requestName: data.namaProject,
+                  type: 'status',
+                  message: getStatusMessage(data.status),
+                  timestamp: data.lastUpdated?.toDate() || new Date(),
+                  read: false,
+                  status: data.status
+                };
+              });
+
+            updateNotifications(statusNotifications);
+          }
+        );
+
+        unsubscribeCallbacks.push(statusUnsubscribe);
+        setIsLoadingNotifications(false);
+      } catch (error) {
+        console.error('Error setting up notifications:', error);
+        setIsLoadingNotifications(false);
+      }
+    };
+
+    setupNotificationSubscriptions();
+
+    return () => {
+      unsubscribeCallbacks.forEach(unsubscribe => unsubscribe());
+    };
+  }, [user?.uid]);
+
+  const getStatusMessage = (status) => {
+    switch (status) {
+      case 'approved':
+        return 'Permintaan Anda telah disetujui';
+      case 'rejected':
+        return 'Permintaan Anda telah ditolak';
+      case 'revision':
+        return 'Permintaan Anda memerlukan revisi';
+      default:
+        return 'Status permintaan telah diperbarui';
+    }
+  };
+
+  const updateNotifications = (newNotifications) => {
+    setNotifications(prev => {
+      const updatedNotifications = [...prev];
+      
+      newNotifications.forEach(newNotif => {
+        const existingIndex = updatedNotifications.findIndex(n => n.id === newNotif.id);
+        if (existingIndex === -1) {
+          updatedNotifications.push(newNotif);
+        } else {
+          updatedNotifications[existingIndex] = {
+            ...updatedNotifications[existingIndex],
+            ...newNotif,
+            read: updatedNotifications[existingIndex].read || newNotif.read
+          };
+        }
+      });
+
+      // Sort by timestamp and limit to last 50 notifications
+      updatedNotifications.sort((a, b) => b.timestamp - a.timestamp);
+      const limitedNotifications = updatedNotifications.slice(0, 50);
+      
+      // Update unread count
+      setUnreadCount(limitedNotifications.filter(n => !n.read).length);
+      
+      return limitedNotifications;
+    });
+  };
+
+  const handleNotificationClick = async (notification) => {
+    if (!notification.read) {
+      // Update read status in state
+      setNotifications(prev => 
+        prev.map(n => 
+          n.id === notification.id ? { ...n, read: true } : n
+        )
+      );
+      setUnreadCount(prev => Math.max(0, prev - 1));
+
+      // Update read status in Firestore if it's a comment
+      if (notification.type === 'comment') {
+        try {
+          const commentId = notification.id.replace('comment_', '');
+          const commentRef = doc(db, 'brd_requests', notification.requestId, 'comments', commentId);
+          await updateDoc(commentRef, { read: true });
+        } catch (error) {
+          console.error('Error updating notification read status:', error);
+        }
+      }
+    }
+
+    // Navigate based on notification type
+    navigate(`/dashboard/requests/${notification.requestId}`);
+    setShowNotifications(false);
+  };
+
+  const handleMarkAllAsRead = async () => {
+    // Update all notifications in state
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
+
+    // Update read status in Firestore for comment notifications
+    try {
+      const commentNotifications = notifications
+        .filter(n => n.type === 'comment' && !n.read)
+        .map(n => ({
+          requestId: n.requestId,
+          commentId: n.id.replace('comment_', '')
+        }));
+
+      await Promise.all(
+        commentNotifications.map(({ requestId, commentId }) =>
+          updateDoc(
+            doc(db, 'brd_requests', requestId, 'comments', commentId),
+            { read: true }
+          )
+        )
+      );
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
+
+    setShowNotifications(false);
+  };
 
   const handleLogout = async () => {
     try {
@@ -32,17 +239,46 @@ const DashboardLayout = () => {
     return location.pathname === path;
   };
 
-  let menuItems = [
-    {
-      path: '/dashboard',
-      name: 'Dashboard',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-        </svg>
-      )
-    },
-    {
+  // Define menu items based on user role
+  const getMenuItems = () => {
+    const baseMenuItems = [];
+
+    // Add role-specific dashboard item first
+    if (profile?.isAdmin) {
+      baseMenuItems.push({
+        path: '/dashboard/admin',
+        name: 'Admin',
+        icon: (
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
+        )
+      });
+    } else if (profile?.role === 'Business Analyst') {
+      baseMenuItems.push({
+        path: '/dashboard/analyst',
+        name: 'Dashboard',
+        icon: (
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        )
+      });
+    } else {
+      // Business Requester dashboard
+      baseMenuItems.push({
+        path: '/dashboard/home',
+        name: 'Dashboard',
+        icon: (
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+          </svg>
+        )
+      });
+    }
+
+    // Add profile menu item last
+    baseMenuItems.push({
       path: '/dashboard/profile',
       name: 'Profile',
       icon: (
@@ -50,34 +286,24 @@ const DashboardLayout = () => {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
       )
-    }
-  ];
-
-  // Add Business Analyst menu item if user has the role
-  if (profile?.role === 'Business Analyst') {
-    menuItems.push({
-      path: '/dashboard/analyst',
-      name: 'Business Analyst',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      )
     });
-  }
 
-  // Add Admin menu item if user is admin
-  if (profile?.isAdmin) {
-    menuItems.push({
-      path: '/dashboard/admin',
-      name: 'Admin',
-      icon: (
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-        </svg>
-      )
-    });
-  }
+    return baseMenuItems;
+  };
+
+  const menuItems = getMenuItems();
+
+  // Add this function to handle clicking outside to close
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showNotifications && !event.target.closest('.notifications-container')) {
+        setShowNotifications(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showNotifications]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
@@ -97,7 +323,7 @@ const DashboardLayout = () => {
                   <img className="h-10 w-auto" src={logo} alt="i-BRD System" />
                   <div className="hidden lg:flex lg:flex-col">
                     <span className="text-lg font-bold bg-gradient-to-r from-blue-900 to-blue-600 bg-clip-text text-transparent">
-                      E-BRD System
+                      i-BRD System
                     </span>
                     <span className="text-xs text-gray-600">Banking & Finance</span>
                   </div>
@@ -125,6 +351,152 @@ const DashboardLayout = () => {
             </div>
 
             <div className="flex items-center space-x-4">
+              {/* Notifications */}
+              <div className="relative notifications-container">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className="relative p-2 rounded-lg text-gray-700 hover:bg-blue-50 hover:text-blue-900 transition-all duration-200 group"
+                >
+                  <svg className="h-6 w-6 transition-transform group-hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-5 w-5 bg-gradient-to-r from-blue-600 to-blue-800 text-white text-xs items-center justify-center font-medium shadow-lg">
+                        {unreadCount}
+                      </span>
+                    </span>
+                  )}
+                </button>
+
+                {/* Notifications Dropdown */}
+                {showNotifications && (
+                  <div className="absolute right-0 mt-3 w-96 bg-white rounded-xl shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none transform transition-all duration-300 ease-in-out">
+                    <div className="rounded-xl overflow-hidden">
+                      {/* Header */}
+                      <div className="px-4 py-3 bg-gradient-to-r from-blue-900 to-blue-700 flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-white flex items-center space-x-2">
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                          </svg>
+                          <span>Notifikasi ({notifications.length})</span>
+                        </h3>
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={handleMarkAllAsRead}
+                            className="text-xs text-blue-100 hover:text-white transition-colors duration-200"
+                          >
+                            Tandai sudah dibaca
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Notifications List */}
+                      <div className="max-h-[32rem] overflow-y-auto overscroll-contain">
+                        {isLoadingNotifications ? (
+                          <div className="px-4 py-12 text-center">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-900 mx-auto"></div>
+                            <p className="mt-4 text-sm text-gray-500">Memuat notifikasi...</p>
+                          </div>
+                        ) : notifications.length === 0 ? (
+                          <div className="px-4 py-12 text-center">
+                            <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                            </svg>
+                            <p className="mt-4 text-sm text-gray-500">Tidak ada notifikasi</p>
+                            <p className="mt-2 text-xs text-gray-400">Anda akan mendapat notifikasi saat ada pembaruan</p>
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {notifications.map((notification) => (
+                              <div
+                                key={notification.id}
+                                onClick={() => handleNotificationClick(notification)}
+                                className={`px-4 py-4 hover:bg-blue-50 cursor-pointer transition-all duration-200 ${
+                                  !notification.read ? 'bg-blue-50/50' : ''
+                                }`}
+                              >
+                                <div className="flex items-start space-x-3">
+                                  <div className="flex-shrink-0">
+                                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shadow-sm ${
+                                      notification.type === 'status' 
+                                        ? notification.status === 'approved'
+                                          ? 'bg-green-100 text-green-700'
+                                          : notification.status === 'rejected'
+                                          ? 'bg-red-100 text-red-700'
+                                          : 'bg-yellow-100 text-yellow-700'
+                                        : 'bg-gradient-to-br from-blue-100 to-blue-200 text-blue-700'
+                                    }`}>
+                                      {notification.type === 'status' ? (
+                                        notification.status === 'approved' ? '✓' :
+                                        notification.status === 'rejected' ? '✕' : '!'
+                                      ) : (
+                                        <span className="text-sm font-semibold">
+                                          {notification.userName?.charAt(0).toUpperCase()}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between">
+                                      <p className="text-sm font-medium text-gray-900">
+                                        {notification.type === 'status' ? 'Pembaruan Status' : notification.userName}
+                                      </p>
+                                      <p className="text-xs text-gray-400 whitespace-nowrap ml-2">
+                                        {notification.timestamp.toLocaleString('id-ID', {
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}
+                                      </p>
+                                    </div>
+                                    <p className="mt-1 text-sm text-gray-500 line-clamp-2">
+                                      {notification.type === 'status' ? (
+                                        <span>
+                                          <span className="font-medium text-blue-900">{notification.requestName}</span>{' '}
+                                          <span className={`font-medium ${
+                                            notification.status === 'approved' ? 'text-green-600' :
+                                            notification.status === 'rejected' ? 'text-red-600' :
+                                            'text-yellow-600'
+                                          }`}>
+                                            {notification.message}
+                                          </span>
+                                        </span>
+                                      ) : (
+                                        <>
+                                          Komentar pada <span className="font-medium text-blue-900">{notification.requestName}</span>
+                                        </>
+                                      )}
+                                    </p>
+                                    {notification.type === 'comment' && (
+                                      <p className="mt-1 text-sm text-gray-600 line-clamp-2">
+                                        "{notification.message}"
+                                      </p>
+                                    )}
+                                    <p className="mt-1 text-xs text-gray-400">
+                                      {notification.timestamp.toLocaleString('id-ID', {
+                                        year: 'numeric',
+                                        month: 'long',
+                                        day: 'numeric'
+                                      })}
+                                    </p>
+                                  </div>
+                                  {!notification.read && (
+                                    <div className="flex-shrink-0">
+                                      <div className="h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-blue-600/20"></div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {profile && (
                 <div className="flex items-center space-x-3">
                   <div className="hidden md:flex md:flex-col md:items-end">

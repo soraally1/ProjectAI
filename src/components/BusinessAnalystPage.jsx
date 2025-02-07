@@ -104,173 +104,231 @@ const BusinessAnalystPage = () => {
   );
 
   return (
-    <div className="space-y-6">
-      {/* Welcome Section */}
-      <div className="bg-gradient-to-br from-blue-900 to-blue-800 rounded-2xl shadow-lg p-6 text-white">
-        <h1 className="text-2xl font-bold">Business Analyst Dashboard</h1>
-        <p className="mt-2 text-blue-100">
-          Manage and review your assigned BRD requests
-        </p>
+    <div className="space-y-8 p-6">
+      {/* Welcome Section with improved gradient and card design */}
+      <div className="bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 rounded-3xl shadow-xl p-8 text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-pattern opacity-10"></div>
+        <div className="relative z-10">
+          <div className="flex items-center space-x-4">
+            <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-lg">
+              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">Dashboard Analis Bisnis</h1>
+              <p className="mt-2 text-blue-100 text-lg">
+                Selamat datang kembali, {profile?.namaLengkap}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard
-          title="Total Assigned"
-          value={requests.length}
-          icon={
-            <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          }
-          color="bg-blue-50"
-        />
-        <StatCard
-          title="Pending Review"
-          value={requests.filter(r => r.status === 'Pending Review').length}
-          icon={
-            <svg className="w-6 h-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
-          }
-          color="bg-yellow-50"
-        />
-        <StatCard
-          title="In Progress"
-          value={requests.filter(r => r.status === 'In Progress').length}
-          icon={
-            <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-          color="bg-indigo-50"
-        />
-        <StatCard
-          title="Completed"
-          value={requests.filter(r => r.status === 'Completed').length}
-          icon={
-            <svg className="w-6 h-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-          color="bg-green-50"
-        />
+      {/* Stats Overview with improved card design */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-200 hover:scale-105">
+          <div className="flex items-center justify-between">
+            <div className="p-3 bg-blue-50 rounded-2xl">
+              <svg className="w-8 h-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <span className="text-3xl font-bold text-gray-900">{requests.length}</span>
+          </div>
+          <p className="mt-4 text-sm font-medium text-gray-600">Total Ditugaskan</p>
+          <div className="mt-2 h-1 w-full bg-blue-100 rounded-full overflow-hidden">
+            <div className="h-full bg-blue-600 rounded-full" style={{ width: '100%' }}></div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-200 hover:scale-105">
+          <div className="flex items-center justify-between">
+            <div className="p-3 bg-yellow-50 rounded-2xl">
+              <svg className="w-8 h-8 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </div>
+            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'Pending Review').length}</span>
+          </div>
+          <p className="mt-4 text-sm font-medium text-gray-600">Menunggu Review</p>
+          <div className="mt-2 h-1 w-full bg-yellow-100 rounded-full overflow-hidden">
+            <div className="h-full bg-yellow-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'Pending Review').length / requests.length) * 100}%` }}></div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-200 hover:scale-105">
+          <div className="flex items-center justify-between">
+            <div className="p-3 bg-indigo-50 rounded-2xl">
+              <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'In Progress').length}</span>
+          </div>
+          <p className="mt-4 text-sm font-medium text-gray-600">Sedang Dikerjakan</p>
+          <div className="mt-2 h-1 w-full bg-indigo-100 rounded-full overflow-hidden">
+            <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'In Progress').length / requests.length) * 100}%` }}></div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-200 hover:scale-105">
+          <div className="flex items-center justify-between">
+            <div className="p-3 bg-green-50 rounded-2xl">
+              <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'Completed').length}</span>
+          </div>
+          <p className="mt-4 text-sm font-medium text-gray-600">Selesai</p>
+          <div className="mt-2 h-1 w-full bg-green-100 rounded-full overflow-hidden">
+            <div className="h-full bg-green-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'Completed').length / requests.length) * 100}%` }}></div>
+          </div>
+        </div>
       </div>
 
-      {/* Filter */}
-      <div className="flex justify-end">
+      {/* Filter and Refresh Section */}
+      <div className="flex justify-between items-center bg-white rounded-2xl shadow-lg p-4">
         <select
           value={selectedStatus}
           onChange={(e) => setSelectedStatus(e.target.value)}
-          className="block w-48 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          className="block w-64 rounded-xl border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
         >
-          <option value="all">All Requests</option>
-          <option value="Pending Review">Pending Review</option>
-          <option value="In Progress">In Progress</option>
-          <option value="Completed">Completed</option>
-          <option value="Rejected">Rejected</option>
+          <option value="all">Semua Permintaan</option>
+          <option value="Pending Review">Menunggu Review</option>
+          <option value="In Progress">Sedang Dikerjakan</option>
+          <option value="Completed">Selesai</option>
+          <option value="Rejected">Ditolak</option>
         </select>
+        <button
+          onClick={fetchAssignedRequests}
+          className="inline-flex items-center px-6 py-3 border border-transparent text-sm font-medium rounded-xl text-white bg-blue-900 hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transform transition-all duration-200 hover:scale-105"
+        >
+          <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Refresh Data
+        </button>
       </div>
 
-      {/* Requests List */}
-      <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-medium text-gray-900">Assigned BRD Requests</h2>
+      {/* Requests List with improved table design */}
+      <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+        <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+          <h2 className="text-xl font-semibold text-gray-900">Permintaan BRD yang Ditugaskan</h2>
         </div>
         
         {loading ? (
-          <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-900 mx-auto"></div>
-            <p className="mt-4 text-gray-500">Loading assigned requests...</p>
+          <div className="p-12 text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-900 mx-auto"></div>
+            <p className="mt-6 text-gray-500 text-lg">Memuat permintaan...</p>
           </div>
         ) : filteredRequests.length === 0 ? (
-          <div className="p-8 text-center">
-            <p className="text-gray-500">No assigned requests found.</p>
+          <div className="p-12 text-center">
+            <div className="mx-auto w-32 h-32 bg-gray-50 rounded-full flex items-center justify-center mb-6">
+              <svg className="w-16 h-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <p className="text-gray-500 text-lg mb-3">Tidak ada permintaan yang ditugaskan</p>
+            <p className="text-sm text-gray-400">Permintaan baru akan muncul di sini saat admin menugaskannya kepada Anda</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    BRD Details
+                  <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Detail BRD
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Requester Info
+                  <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Pemohon
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Project Details
+                  <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Detail Project
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                  <th className="px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Aksi
                   </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredRequests.map((request) => (
-                  <tr key={request.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
+                  <tr key={request.id} className="hover:bg-gray-50 transition-colors duration-150">
+                    <td className="px-8 py-5">
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium text-gray-900">
-                          {request.noBRD}
+                        <span className="text-sm font-semibold text-gray-900">
+                          {request.nomorSurat}
                         </span>
-                        <span className="text-xs text-gray-500">
-                          Created: {request.createdAt?.toLocaleDateString()}
+                        <span className="text-xs text-gray-500 mt-1">
+                          Dibuat: {request.createdAt?.toLocaleDateString('id-ID', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                          })}
                         </span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-8 py-5">
+                      <div className="flex items-center space-x-3">
+                        <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                          <span className="text-blue-600 font-medium text-sm">
+                            {request.createdByName?.charAt(0)}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-gray-900">
+                            {request.createdByName}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {request.unitBisnis}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-8 py-5">
                       <div className="flex flex-col">
                         <span className="text-sm font-medium text-gray-900">
-                          {request.createdByName}
+                          {request.aplikasiDikembangkan}
                         </span>
-                        <span className="text-xs text-gray-500">
-                          {request.unitBisnis}
+                        <span className="text-xs text-gray-500 line-clamp-1 mt-1">
+                          {request.fiturDikembangkan}
                         </span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-gray-900">
-                          {request.namaProject}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {request.jenisPermintaan} - {request.prioritas}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <Link
-                        to={`/dashboard/request/${request.id}`}
-                        className="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md text-blue-900 bg-blue-100 hover:bg-blue-200"
-                      >
-                        Open Workspace
-                        <svg className="ml-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </Link>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(request.status)}`}>
-                        {request.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
+                    <td className="px-8 py-5">
                       <select
                         value={request.status}
                         onChange={(e) => handleStatusChange(request.id, e.target.value)}
                         disabled={updating === request.id}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                        className={`block w-full rounded-xl shadow-sm text-sm transition-all duration-200
+                          ${request.status === 'Pending Review' ? 'bg-yellow-50 border-yellow-300 text-yellow-800' :
+                            request.status === 'In Progress' ? 'bg-blue-50 border-blue-300 text-blue-800' :
+                            request.status === 'Completed' ? 'bg-green-50 border-green-300 text-green-800' :
+                            request.status === 'Rejected' ? 'bg-red-50 border-red-300 text-red-800' :
+                            'border-gray-300'} 
+                          focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
-                        <option value="Pending Review">Pending Review</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Completed">Completed</option>
-                        <option value="Rejected">Rejected</option>
+                        <option value="Pending Review">Menunggu Review</option>
+                        <option value="In Progress">Sedang Dikerjakan</option>
+                        <option value="Completed">Selesai</option>
+                        <option value="Rejected">Ditolak</option>
                       </select>
+                    </td>
+                    <td className="px-8 py-5">
+                      <Link
+                        to={`/dashboard/request/${request.id}`}
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-xl text-blue-900 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 transform hover:scale-105"
+                      >
+                        Buka Workspace
+                        <svg className="ml-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                      </Link>
                     </td>
                   </tr>
                 ))}

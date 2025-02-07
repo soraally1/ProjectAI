@@ -1,0 +1,110 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin');
+    }
+    
+    function isBusinessAnalyst() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Business Analyst';
+    }
+
+    function isAssignedToUser(resource) {
+      return isAuthenticated() && (
+        request.auth.uid == resource.data.assignedTo ||
+        request.auth.uid == resource.data.assignedAnalystId
+      );
+    }
+
+    // System settings collection
+    match /system_settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if request.auth.uid == userId || isAdmin();
+    }
+
+    // BRD requests collection
+    match /brd_requests/{requestId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        request.auth.uid == resource.data.requesterId ||
+        request.auth.uid == resource.data.createdBy ||
+        (isBusinessAnalyst() && isAssignedToUser(resource)) ||
+        resource.data.createdByEmail == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        request.auth.uid == resource.data.createdBy ||
+        (isBusinessAnalyst() && isAssignedToUser(resource))
+      );
+      allow delete: if isAdmin();
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated() && (
+          isAdmin() ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.createdBy ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.assignedTo ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.assignedAnalystId ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.requesterId
+        );
+        allow create: if isAuthenticated() && (
+          isAdmin() ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.createdBy ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.assignedTo ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.assignedAnalystId ||
+          request.auth.uid == get(/databases/$(database)/documents/brd_requests/$(requestId)).data.requesterId
+        );
+        allow update: if isAuthenticated() && (
+          request.auth.uid == resource.data.userId ||
+          isAdmin()
+        );
+        allow delete: if isAdmin();
+        allow read: if request.auth != null && (request.auth.uid == userId || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+      allow write: if request.auth != null && (request.auth.uid == userId || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+      }
+    }
+
+    // BRD templates collection
+    match /brd_templates/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    // Allow anyone to read system settings
+    match /system_settings/{document} {
+      allow read: if true;
+      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Custom fields collection with improved rules
+    match /custom_fields/{fieldId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && 
+        request.resource.data.keys().hasAll(['name', 'label', 'type']) && 
+        request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && 
+        request.auth.uid == resource.data.createdBy;
+      allow delete: if isAdmin() && 
+        request.auth.uid == resource.data.createdBy;
+    }
+
+  }
+}
