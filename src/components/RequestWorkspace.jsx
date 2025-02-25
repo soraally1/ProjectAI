@@ -109,17 +109,17 @@ const RequestWorkspace = () => {
       // Get the latest comment
       const latestComment = comments[0];
       
-      // Check if it's a new comment from another user
+      // Check if it's a new comment from another user and discussion tab is not active
       const shouldNotify = 
         latestComment.userId !== user.uid && 
         (!lastSeenComment || latestComment.timestamp > lastSeenComment) &&
         activeTab !== 'discussion';
 
       if (shouldNotify) {
-        // Show toast notification
+        // Show single toast notification with action
         toast.info(
           <div className="flex flex-col">
-            <strong>New Comment from {latestComment.userName}</strong>
+            <strong>Komentar baru dari {latestComment.userName}</strong>
             <span className="text-sm">{latestComment.text.substring(0, 100)}{latestComment.text.length > 100 ? '...' : ''}</span>
           </div>,
           {
@@ -129,25 +129,22 @@ const RequestWorkspace = () => {
             closeOnClick: true,
             pauseOnHover: true,
             draggable: true,
-            progress: undefined,
             onClick: () => {
               setActiveTab('discussion');
             },
           }
         );
 
-        // Show desktop notification
+        // Show desktop notification only if permission is granted and discussion tab is not active
         try {
-          // Double check permission
-          if (Notification.permission === "granted") {
-            console.log("Creating desktop notification"); // Debug log
-            const notification = new Notification(`New Comment from ${latestComment.userName}`, {
+          if (Notification.permission === "granted" && activeTab !== 'discussion') {
+            const notification = new Notification(`Komentar baru dari ${latestComment.userName}`, {
               body: latestComment.text.substring(0, 100) + (latestComment.text.length > 100 ? '...' : ''),
               icon: '/src/assets/i-BRDSystem.svg',
               badge: '/src/assets/i-BRDSystem.svg',
-              tag: `brd-comment-${Date.now()}`, // Unique tag for each notification
-              requireInteraction: true,
-              silent: false
+              tag: `brd-comment-${Date.now()}`,
+              requireInteraction: false,
+              silent: true
             });
 
             notification.onclick = function() {
@@ -155,10 +152,6 @@ const RequestWorkspace = () => {
               setActiveTab('discussion');
               this.close();
             };
-
-            console.log("Desktop notification created"); // Debug log
-          } else {
-            console.log("Notification permission not granted:", Notification.permission); // Debug log
           }
         } catch (error) {
           console.error('Error showing desktop notification:', error);
@@ -226,14 +219,17 @@ const RequestWorkspace = () => {
             setModifiedFields(new Set());
             setHasUnsavedChanges(false);
             
-            // Show notification for changes from other users
-            toast.info(
-              `${data.lastSavedBy.name} telah memperbarui formulir`,
-              {
-                position: "top-right",
-                autoClose: 3000
-              }
-            );
+            // Only show notification for significant changes
+            if (data.currentEditor !== request?.currentEditor) {
+              const editorType = data.currentEditor === 'analyst' ? 'Business Analyst' : 'Requester';
+              toast.info(
+                `Giliran telah beralih ke ${editorType}`,
+                {
+                  position: "top-right",
+                  autoClose: 3000
+                }
+              );
+            }
           }
 
           // Update editor state regardless of who made the change
@@ -243,7 +239,7 @@ const RequestWorkspace = () => {
 
       return () => unsubscribe();
     }
-  }, [requestId, user.uid]);
+  }, [requestId, user.uid, request?.currentEditor]);
 
   const fetchRequest = async () => {
     try {
@@ -570,12 +566,6 @@ Setiap bagian harus mencakup:
       return;
     }
 
-    // Check if BRD has already been generated
-    if (request?.status === 'Already Generated') {
-      toast.warning("BRD sudah pernah dibuat sebelumnya");
-      return;
-    }
-
     try {
       setGenerating(true);
       setError(null);
@@ -655,7 +645,7 @@ ${Object.entries(fields).map(([label, value]) => `${label}: ${value}`).join('\n'
 
       console.log('Generated content:', generatedText);
 
-      // Save the generated content to Firestore
+      // Update request document with generated content and change turn
       const requestRef = doc(db, 'brd_requests', requestId);
       await updateDoc(requestRef, {
         generatedContent: {
@@ -678,22 +668,29 @@ ${Object.entries(fields).map(([label, value]) => `${label}: ${value}`).join('\n'
         details: 'BRD content has been generated'
       });
 
-      // Update local state
+      // Update all local states at once to prevent multiple re-renders
+      const newEditor = request?.currentEditor === 'analyst' ? 'requester' : 'analyst';
       setRequest(prev => ({
         ...prev,
         generatedContent: {
           info_project: generatedText
         },
         status: 'Already Generated',
-        currentEditor: prev?.currentEditor === 'analyst' ? 'requester' : 'analyst',
+        currentEditor: newEditor,
         updatedAt: new Date(),
         updatedBy: user.uid,
         updatedByName: profile.namaLengkap
       }));
-
-      // Switch to view tab
+      
+      setCurrentEditor(newEditor);
       setActiveTab('view');
-      toast.success('BRD berhasil dibuat!');
+
+      // Single success notification with complete information
+      const nextEditor = newEditor === 'analyst' ? 'Business Analyst' : 'Requester';
+      toast.success(`BRD berhasil dibuat. Giliran sekarang: ${nextEditor}`, {
+        autoClose: 4000,
+        position: "top-right"
+      });
 
     } catch (error) {
       console.error('Error generating BRD:', error);

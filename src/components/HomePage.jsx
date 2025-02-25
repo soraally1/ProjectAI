@@ -492,7 +492,7 @@ const HomePage = () => {
                             <div className="text-xs text-gray-500 mt-0.5">
                               {request.status === 'New' ? 'Menunggu Review' :
                                request.status === 'In Progress' ? 'Sedang Mengerjakan' :
-                               request.status === 'Already Generated' ? 'Selesai dibuat' :
+                               request.status === 'Already Generated' ? 'Memasuki Tahap Generating' :
                                request.status === 'Completed' ? 'Selesai' : 'Menunggu Review'}
                             </div>
                           </div>

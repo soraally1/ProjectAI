@@ -33,15 +33,15 @@ const DashboardLayout = () => {
 
     const setupNotificationSubscriptions = async () => {
       try {
-        // Query for all BRD requests where user is involved (either as assignee or requester)
+        // Query for all BRD requests where user is involved
         const [assignedRequestsSnapshot, requestedRequestsSnapshot] = await Promise.all([
           getDocs(query(
             collection(db, 'brd_requests'),
-            where('assignedTo', '==', user.uid)
+            where('assignedAnalystId', '==', user.uid)
           )),
           getDocs(query(
             collection(db, 'brd_requests'),
-            where('requesterId', '==', user.uid)
+            where('createdBy', '==', user.uid)
           ))
         ]);
 
@@ -62,7 +62,11 @@ const DashboardLayout = () => {
 
           const unsubscribe = onSnapshot(commentsQuery, async (commentsSnapshot) => {
             const newNotifications = commentsSnapshot.docs
-              .filter(doc => doc.data().userId !== user.uid)
+              .filter(doc => {
+                const data = doc.data();
+                // Only show notifications for comments intended for this user
+                return data.userId !== user.uid && data.recipientId === user.uid;
+              })
               .map(doc => ({
                 id: `comment_${doc.id}`,
                 requestId: requestId,
@@ -85,16 +89,16 @@ const DashboardLayout = () => {
         const statusUnsubscribe = onSnapshot(
           query(
             collection(db, 'brd_requests'),
-            where('requesterId', '==', user.uid),
-            orderBy('lastUpdated', 'desc')
+            where('createdBy', '==', user.uid),
+            orderBy('updatedAt', 'desc')
           ),
           (statusSnapshot) => {
             const statusNotifications = statusSnapshot.docs
               .filter(doc => {
                 const data = doc.data();
-                const lastUpdated = data.lastUpdated?.toDate() || new Date();
+                const lastUpdated = data.updatedAt?.toDate() || new Date();
                 const isRecent = lastUpdated > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-                return isRecent && (data.status === 'approved' || data.status === 'rejected' || data.status === 'revision');
+                return isRecent && data.status !== 'New';
               })
               .map(doc => {
                 const data = doc.data();
@@ -104,7 +108,7 @@ const DashboardLayout = () => {
                   requestName: data.namaProject,
                   type: 'status',
                   message: getStatusMessage(data.status),
-                  timestamp: data.lastUpdated?.toDate() || new Date(),
+                  timestamp: data.updatedAt?.toDate() || new Date(),
                   read: false,
                   status: data.status
                 };
@@ -131,14 +135,16 @@ const DashboardLayout = () => {
 
   const getStatusMessage = (status) => {
     switch (status) {
-      case 'approved':
-        return 'Permintaan Anda telah disetujui';
-      case 'rejected':
-        return 'Permintaan Anda telah ditolak';
-      case 'revision':
-        return 'Permintaan Anda memerlukan revisi';
+      case 'In Progress':
+        return 'Analis telah mulai mengerjakan BRD';
+      case 'Already Generated':
+        return 'BRD telah selesai dibuat';
+      case 'Completed':
+        return 'BRD telah selesai diproses';
+      case 'Rejected':
+        return 'BRD telah ditolak';
       default:
-        return 'Status permintaan telah diperbarui';
+        return 'Status BRD telah diperbarui';
     }
   };
 
@@ -192,8 +198,8 @@ const DashboardLayout = () => {
       }
     }
 
-    // Navigate based on notification type
-    navigate(`/dashboard/requests/${notification.requestId}`);
+    // Navigate to the request workspace
+    navigate(`/dashboard/request/${notification.requestId}`);
     setShowNotifications(false);
   };
 
