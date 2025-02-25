@@ -19,6 +19,8 @@ import MaintenancePage from './components/MaintenancePage';
 import CookieConsent from './components/CookieConsent';
 import SecurityMiddleware from './components/SecurityMiddleware';
 import { auth } from './firebase';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles, requireAdmin }) => {
@@ -319,6 +321,12 @@ const AppRoutes = () => {
           </ProtectedRoute>
         } />
       </Route>
+
+      {/* Forgot Password Route */}
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+
+      {/* Reset Password Route */}
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       {/* 404 Route */}
       <Route 

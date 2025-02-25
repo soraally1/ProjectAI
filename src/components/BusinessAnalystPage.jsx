@@ -74,10 +74,14 @@ const BusinessAnalystPage = () => {
 
   const getStatusColor = (status) => {
     switch (status) {
+      case 'New':
+        return 'bg-blue-100 text-blue-800';
       case 'Pending Review':
         return 'bg-yellow-100 text-yellow-800';
       case 'In Progress':
         return 'bg-blue-100 text-blue-800';
+      case 'Already Generated':
+        return 'bg-emerald-100 text-emerald-800';
       case 'Completed':
         return 'bg-green-100 text-green-800';
       case 'Rejected':
@@ -308,6 +312,7 @@ const BusinessAnalystPage = () => {
                         className={`block w-full rounded-xl shadow-sm text-sm transition-all duration-200
                           ${request.status === 'Pending Review' ? 'bg-yellow-50 border-yellow-300 text-yellow-800' :
                             request.status === 'In Progress' ? 'bg-blue-50 border-blue-300 text-blue-800' :
+                            request.status === 'Already Generated' ? 'bg-emerald-50 border-emerald-300 text-emerald-800' :
                             request.status === 'Completed' ? 'bg-green-50 border-green-300 text-green-800' :
                             request.status === 'Rejected' ? 'bg-red-50 border-red-300 text-red-800' :
                             'border-gray-300'} 
@@ -315,6 +320,7 @@ const BusinessAnalystPage = () => {
                       >
                         <option value="Pending Review">Menunggu Review</option>
                         <option value="In Progress">Sedang Dikerjakan</option>
+                        <option value="Already Generated">Sudah Dibuat</option>
                         <option value="Completed">Selesai</option>
                         <option value="Rejected">Ditolak</option>
                       </select>

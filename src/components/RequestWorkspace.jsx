@@ -47,6 +47,10 @@ const RequestWorkspace = () => {
   const [currentEditor, setCurrentEditor] = useState(null);
   const [savedFields, setSavedFields] = useState({});
 
+  // Add this state near the top with other state declarations
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [modifiedFields, setModifiedFields] = useState(new Set());
+
   // Helper function to convert numbers to Roman numerals
   const toRomanNumeral = (num) => {
     const romanNumerals = [
@@ -173,6 +177,16 @@ const RequestWorkspace = () => {
     return () => unsubscribe();
   }, [requestId]);
 
+  // Add new useEffect for completed BRD handling
+  useEffect(() => {
+    if (request?.status === 'Completed') {
+      toast.info('BRD telah selesai. Anda akan diarahkan ke dashboard.');
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 2000);
+    }
+  }, [request?.status, navigate]);
+
   useEffect(() => {
     // Set initial editor as analyst if request is new
     if (!request?.currentEditor) {
@@ -187,6 +201,49 @@ const RequestWorkspace = () => {
       setFormData(request.savedFields);
     }
   }, [request]);
+
+  // Add at the beginning of the component
+  useEffect(() => {
+    console.log('Current state:', {
+      currentEditor: request?.currentEditor,
+      userRole: profile?.role,
+      canEdit: canEdit(),
+      formData
+    });
+  }, [request?.currentEditor, profile?.role, formData]);
+
+  // Update the real-time listener useEffect
+  useEffect(() => {
+    if (requestId) {
+      const unsubscribe = onSnapshot(doc(db, 'brd_requests', requestId), (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          setRequest(data);
+          
+          // Update formData and reset states when changes come from another user
+          if (data.lastSavedBy?.uid !== user.uid) {
+            setFormData(data.formData || {});
+            setModifiedFields(new Set());
+            setHasUnsavedChanges(false);
+            
+            // Show notification for changes from other users
+            toast.info(
+              `${data.lastSavedBy.name} telah memperbarui formulir`,
+              {
+                position: "top-right",
+                autoClose: 3000
+              }
+            );
+          }
+
+          // Update editor state regardless of who made the change
+          setCurrentEditor(data.currentEditor || 'analyst');
+        }
+      });
+
+      return () => unsubscribe();
+    }
+  }, [requestId, user.uid]);
 
   const fetchRequest = async () => {
     try {
@@ -335,7 +392,7 @@ Setiap bagian harus mencakup:
 
   const handleTemplateSelect = async (template) => {
     try {
-      setSelectedTemplate(template);
+      setIsSubmitting(true);
       
       // Initialize form data based on template structure
       const initialData = {};
@@ -351,7 +408,11 @@ Setiap bagian harus mencakup:
         });
       }
       
+      // Update local state first
+      setSelectedTemplate(template);
       setFormData(initialData);
+      setModifiedFields(new Set());
+      setHasUnsavedChanges(false);
       
       // Update request document with template selection
       const requestRef = doc(db, 'brd_requests', requestId);
@@ -360,7 +421,13 @@ Setiap bagian harus mencakup:
         templateName: template.name,
         templateStructure: template.structure,
         formData: initialData,
-        currentEditor: 'analyst', // Reset to analyst when template changes
+        currentEditor: 'requester',
+        lastSavedBy: {
+          uid: user.uid,
+          name: profile.namaLengkap,
+          role: profile.role,
+          timestamp: serverTimestamp()
+        },
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
         updatedByName: profile.namaLengkap
@@ -371,62 +438,141 @@ Setiap bagian harus mencakup:
     } catch (error) {
       console.error('Error selecting template:', error);
       toast.error('Gagal memilih template. Silakan coba lagi.');
+      // Revert local state on error
+      fetchRequest();
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleChangeTemplate = () => {
     if (window.confirm('Mengubah template akan menghapus semua kolom yang telah diisi. Apakah Anda yakin ingin melanjutkan?')) {
+      // First update local state
       setSelectedTemplate(null);
       setFormData({});
+      setModifiedFields(new Set());
+      setHasUnsavedChanges(false);
       
       // Update request document to remove template data
       const requestRef = doc(db, 'brd_requests', requestId);
-      updateDoc(requestRef, {
+      const updateData = {
         templateId: null,
         templateName: null,
         templateStructure: null,
         formData: {},
-        currentEditor: 'analyst',
+        currentEditor: profile.role === 'Business Analyst' ? 'analyst' : 'requester',
+        lastSavedBy: {
+          uid: user.uid,
+          name: profile.namaLengkap,
+          role: profile.role,
+          timestamp: serverTimestamp()
+        },
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
-        updatedByName: profile.namaLengkap
-      }).catch(error => {
-        console.error('Error resetting template:', error);
-        toast.error('Gagal mengatur ulang template');
-      });
-    }
-  };
-
-  const handleFieldChange = async (fieldName, value) => {
-    try {
-      const updatedFormData = {
-        ...formData,
-        [fieldName]: value
+        updatedByName: profile.namaLengkap,
+        status: request.status // Preserve existing status
       };
-      
-      setFormData(updatedFormData);
-      
-      // Update request document with new form data
-      const requestRef = doc(db, 'brd_requests', requestId);
-      await updateDoc(requestRef, {
-        formData: updatedFormData,
-        updatedAt: serverTimestamp(),
-        updatedBy: user.uid,
-        updatedByName: profile.namaLengkap
+
+      updateDoc(requestRef, updateData)
+        .then(() => {
+          toast.success('Template berhasil diatur ulang');
+        })
+        .catch(error => {
+        console.error('Error resetting template:', error);
+          toast.error('Gagal mengatur ulang template. Silakan coba lagi.');
+          // Revert local state on error
+          fetchRequest();
       });
-    } catch (error) {
-      console.error('Error updating field:', error);
-      toast.error('Gagal memperbarui kolom. Silakan coba lagi.');
     }
   };
 
+  const handleFieldChange = (fieldName, value) => {
+    if (request?.status === 'Completed') {
+      toast.warning('BRD telah selesai dan tidak dapat diubah.');
+      return;
+    }
+
+    if (!canEdit()) {
+      console.log('Edit blocked - not allowed to edit');
+      return;
+    }
+
+    // Update local state
+    setFormData(prevData => ({
+      ...prevData,
+        [fieldName]: value
+    }));
+
+    // Track modified fields
+    setModifiedFields(prev => {
+      const newSet = new Set(prev);
+      newSet.add(fieldName);
+      return newSet;
+    });
+    
+    setHasUnsavedChanges(true);
+  };
+
+  // Update the useEffect for fetching generated content
+  useEffect(() => {
+    const fetchGeneratedContent = async () => {
+      if (request?.generatedContent) {
+        console.log('Raw generatedContent:', request.generatedContent);
+        
+        // If generatedContent is a string, parse it into sections
+        if (typeof request.generatedContent === 'string') {
+          const sections = {};
+          const lines = request.generatedContent.split('\n');
+          let currentSection = '';
+          let currentContent = [];
+
+          for (const line of lines) {
+            const sectionMatch = line.match(/^([IVX]+)\.\s+(.*)/);
+            if (sectionMatch) {
+              if (currentSection && currentContent.length > 0) {
+                sections[currentSection] = currentContent.join('\n');
+              }
+              currentSection = sectionMatch[2];
+              currentContent = [];
+            } else if (line.trim() && currentSection) {
+              currentContent.push(line);
+            }
+          }
+
+          // Save the last section
+          if (currentSection && currentContent.length > 0) {
+            sections[currentSection] = currentContent.join('\n');
+          }
+
+          console.log('Parsed sections:', sections);
+          setGeneratedContent(sections);
+        } else {
+          // If it's already an object, use it directly
+          console.log('Using existing object:', request.generatedContent);
+          setGeneratedContent(request.generatedContent);
+        }
+      } else {
+        console.log('No generated content found');
+        setGeneratedContent(null);
+      }
+    };
+
+    fetchGeneratedContent();
+  }, [request?.generatedContent]);
+
+  // Update the handleGenerateBRD function's content parsing
   const handleGenerateBRD = async () => {
-    // Check if it's the user's turn to generate
     if (
       (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
       (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
     ) {
-      toast.error("You can't generate BRD when it's not your turn");
+      toast.error("Anda tidak dapat membuat BRD saat bukan giliran Anda");
+      return;
+    }
+
+    // Check if BRD has already been generated
+    if (request?.status === 'Already Generated') {
+      toast.warning("BRD sudah pernah dibuat sebelumnya");
       return;
     }
 
@@ -439,145 +585,57 @@ Setiap bagian harus mencakup:
       const settingsSnap = await getDoc(settingsRef);
       const systemSettings = settingsSnap.data();
       
-      // Use custom prompts from settings or fall back to defaults
-      const defaultSystemPrompt = `You are an expert Business Analyst at Bank Jateng with over 10 years of experience in creating Business Requirements Documents (BRD).
-Your task is to generate content ONLY for the filled fields and sections in the BRD, following banking industry standards.
-Use formal Indonesian language, technical banking terminology, and ensure compliance with banking regulations.
-Do not generate content for unfilled fields or sections.`;
+      // Prepare the content for generation
+      const templateStructure = selectedTemplate?.structure?.sections || [];
+      const filledSections = {};
 
-      const defaultInstructions = [
-        "Generate content ONLY for sections with filled fields",
-        "Use formal Bahasa Indonesia throughout the document",
-        "Include specific banking industry context and terminology",
-        "Consider regulatory compliance and banking regulations",
-        "Focus on security and risk aspects",
-        "Generate detailed content only for provided field values",
-        "Use clear and concise language while maintaining technical accuracy",
-        "Format currency values in Indonesian Rupiah format",
-        "Maintain proper paragraph structure and formatting",
-        "Only reference and elaborate on the provided field values",
-        "Do not generate content for unfilled fields or sections",
-        "Add context and elaboration only around the provided values"
-      ];
-
-      const systemPrompt = systemSettings?.defaultPrompts?.brdGeneration || defaultSystemPrompt;
-      const customInstructions = systemSettings?.defaultPrompts?.brdInstructions?.split('\n').filter(Boolean) || defaultInstructions;
-      
-      // Validate template selection
-      if (!selectedTemplate?.id) {
-        setError('Please select a template first');
-        return;
-      }
-
-      // Get template structure and validate
-      const templateStructure = selectedTemplate.structure;
-      if (!templateStructure?.sections) {
-        throw new Error('Selected template does not have a valid structure');
-      }
-
-      // Get filled fields and their values
+      // Collect filled fields for each section
+      templateStructure.forEach(section => {
       const filledFields = {};
-      templateStructure.sections.forEach(section => {
         section.fieldConfigs?.forEach(field => {
           if (formData[field.name]) {
-            filledFields[field.name] = {
-              value: formData[field.name],
-              label: field.label,
-              type: field.type,
-              section: section.title
-            };
+            filledFields[field.label] = formData[field.name];
           }
         });
+        if (Object.keys(filledFields).length > 0) {
+          filledSections[section.title] = filledFields;
+        }
       });
 
-      // Check if any fields are filled
-      if (Object.keys(filledFields).length === 0) {
-        setError('Please fill in at least one field before generating');
-        return;
-      }
+      // Create the prompt content
+      const promptContent = `${systemSettings?.defaultPrompts?.brdGeneration || ''}
 
-      const apiKey = import.meta.env.VITE_GROQ_API_KEY;
-      if (!apiKey) {
-        throw new Error('GROQ API key not found');
-      }
+${systemSettings?.defaultPrompts?.brdInstruction || 'Generate BRD based on the following information:'}
 
-      // Create structured input only from filled fields
-      const structuredInput = templateStructure.sections
-        .map(section => {
-          const sectionFields = section.fieldConfigs?.filter(field => filledFields[field.name]) || [];
-          
-          if (sectionFields.length === 0) return null;
+${Object.entries(filledSections).map(([section, fields]) => `
+${section.toUpperCase()}:
+${Object.entries(fields).map(([label, value]) => `${label}: ${value}`).join('\n')}
+`).join('\n')}`;
 
-          return `${section.title.toUpperCase()}:
-${sectionFields.map(field => {
-  const value = formData[field.name];
-  let formattedValue = value;
-  
-  // Format value based on field type
-  switch (field.type) {
-    case 'textarea':
-      formattedValue = value.split('\n').map(line => `  ${line}`).join('\n');
-      break;
-    case 'select':
-      formattedValue = `[${value}]`;
-      break;
-    case 'currency':
-      formattedValue = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(value || 0);
-      break;
-  }
-  
-  return `${field.label}:
-  ${formattedValue}`;
-}).join('\n')}`;
-        })
-        .filter(Boolean)
-        .join('\n\n');
+      console.log('Sending prompt to Groq:', promptContent);
 
-      // Create prompt focusing only on filled sections
-      const promptContent = `
-${systemSettings?.defaultPrompts?.brdInstruction || 'Generate a Business Requirements Document (BRD) based on the following filled template parameters:'}
-
-${structuredInput}
-
-Document Structure (Only for filled sections):
-${templateStructure.sections
-  .filter(section => section.fieldConfigs?.some(field => filledFields[field.name]))
-  .map((section, index) => `
-${toRomanNumeral(index + 1)}. ${section.title}
-${section.description ? `Description: ${section.description}` : ''}
-${(section.points || [])
-  .filter(point => {
-    const fieldName = section.fieldConfigs?.find(f => point.includes(f.label))?.name;
-    return !fieldName || filledFields[fieldName];
-  })
-  .map((point, pointIndex) => `${pointIndex + 1}. ${point}`)
-  .join('\n')}`).join('\n')}
-
-Important Instructions:
-${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`).join('\n')}`;
-
-      // Call GROQ API
+      // Make the API call to Groq
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "mixtral-8x7b-32768",
+          model: 'mixtral-8x7b-32768',
           messages: [
             {
-              role: "system",
-              content: systemPrompt
+              role: 'system',
+              content: systemSettings?.defaultPrompts?.brdGeneration || ''
             },
             {
-              role: "user",
+              role: 'user',
               content: promptContent
             }
           ],
           temperature: 0.7,
-          max_tokens: 4000,
-        }),
+          max_tokens: 32000
+        })
       });
 
       if (!response.ok) {
@@ -585,258 +643,380 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
       }
 
       const data = await response.json();
-      const generatedText = data.choices[0].message.content;
+      let generatedText = data.choices[0].message.content;
 
-      // Parse and format the generated content only for sections with filled fields
-      const sections = {};
-      templateStructure.sections
-        .filter(section => section.fieldConfigs?.some(field => filledFields[field.name]))
-        .forEach((section, index) => {
-          const currentRoman = toRomanNumeral(index + 1);
-          const nextRoman = index < templateStructure.sections.length - 1 ? toRomanNumeral(index + 2) : '';
-          
-          const pattern = nextRoman 
-            ? new RegExp(`${currentRoman}\\. ${section.title}[\\s\\S]*?(?=${nextRoman}\\. |$)`)
-            : new RegExp(`${currentRoman}\\. ${section.title}[\\s\\S]*$`);
-          
-          const sectionContent = generatedText.match(pattern)?.[0] || '';
-          const sectionKey = section.title.toLowerCase().replace(/\s+/g, '_');
-          
-          // Format section content with field references
-          const formattedContent = formatSectionContent(
-            sectionContent,
-            section,
-            section.fieldConfigs?.filter(field => filledFields[field.name]) || []
-          );
-          sections[sectionKey] = formattedContent;
-        });
+      // Clean up the generated text
+      generatedText = generatedText
+        .replace(/\*\*/g, '') // Remove all double asterisks
+        .replace(/\*/g, '')   // Remove any remaining single asterisks
+        .replace(/`/g, '')    // Remove backticks
+        .replace(/_{2,}/g, '') // Remove underscores
+        .trim();              // Remove extra whitespace
 
-      // Update request with generated content
+      console.log('Generated content:', generatedText);
+
+      // Save the generated content to Firestore
       const requestRef = doc(db, 'brd_requests', requestId);
       await updateDoc(requestRef, {
-        generatedContent: sections,
-        templateId: selectedTemplate.id,
-        templateName: selectedTemplate.name,
-        formData,
-        templateStructure,
-        status: 'Generated',
-        currentEditor: request?.currentEditor === 'analyst' ? 'requester' : 'analyst',
-        lastSavedBy: {
-          uid: user.uid,
-          name: profile.namaLengkap,
-          role: profile.role,
-          timestamp: serverTimestamp()
+        generatedContent: {
+          info_project: generatedText
         },
+        status: 'Already Generated',
+        currentEditor: request?.currentEditor === 'analyst' ? 'requester' : 'analyst',
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
-        updatedByName: profile.namaLengkap,
-        generatedBy: {
-          uid: user.uid,
-          name: profile.namaLengkap,
-          role: profile.role,
-          timestamp: serverTimestamp()
-        }
+        updatedByName: profile.namaLengkap
       });
 
-      setGeneratedContent(sections);
+      // Add activity log
+      const activityRef = collection(db, 'brd_requests', requestId, 'activities');
+      await addDoc(activityRef, {
+        type: 'brd_generated',
+        timestamp: serverTimestamp(),
+        userId: user.uid,
+        userName: profile.namaLengkap,
+        details: 'BRD content has been generated'
+      });
+
+      // Update local state
+      setRequest(prev => ({
+        ...prev,
+        generatedContent: {
+          info_project: generatedText
+        },
+        status: 'Already Generated',
+        currentEditor: prev?.currentEditor === 'analyst' ? 'requester' : 'analyst',
+        updatedAt: new Date(),
+        updatedBy: user.uid,
+        updatedByName: profile.namaLengkap
+      }));
+
+      // Switch to view tab
       setActiveTab('view');
-      toast.success('BRD berhasil dibuat. Sekarang giliran ' + 
-        (request?.currentEditor === 'analyst' ? 'pemohon' : 'analyst') + '.');
+      toast.success('BRD berhasil dibuat!');
+
     } catch (error) {
       console.error('Error generating BRD:', error);
-      setError(error.message);
+      setError('Failed to generate BRD: ' + error.message);
       toast.error('Gagal membuat BRD. Silakan coba lagi.');
     } finally {
       setGenerating(false);
     }
   };
 
-  // Helper function to format section content
+  // Update the formatSectionContent function
   const formatSectionContent = (content, section, fields) => {
     if (!content) return '';
 
-    // Add field references if not already present
-    const contentWithRefs = fields.reduce((acc, field) => {
-      const fieldValue = formData[field.name];
-      if (!fieldValue) return acc;
-
-      const fieldRef = `[${field.label}: ${fieldValue}]`;
-      if (!acc.includes(fieldRef)) {
-        return acc + `\n\nReference: ${fieldRef}`;
-      }
-      return acc;
-    }, content);
+    // Add section description if available
+    let formattedContent = section.description 
+      ? `${section.description}\n\n${content}`
+      : content;
 
     // Format currency values
-    let formattedContent = contentWithRefs.replace(/Rp\s*\d+([.,]\d{3})*/g, match => {
+    formattedContent = formattedContent.replace(/Rp\s*\d+([.,]\d{3})*/g, match => {
       const number = match.replace(/[^\d]/g, '');
       return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(number);
     });
 
-    // Add section description if available
-    if (section.description) {
-      formattedContent = `${section.description}\n\n${formattedContent}`;
-    }
+    // Add field references and analysis
+    const fieldAnalysis = fields.map(field => {
+      const fieldValue = formData[field.name];
+      if (!fieldValue) return '';
 
-    return formattedContent;
+      let analysis = '';
+      switch (field.type) {
+        case 'currency':
+          const amount = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(fieldValue);
+          analysis = `\nAnalisis Dampak Finansial:\n- Nilai: ${amount}\n- Pertimbangan biaya dan manfaat\n- Analisis ROI`;
+          break;
+        case 'date':
+          const date = new Date(fieldValue).toLocaleDateString('id-ID', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          });
+          analysis = `\nAnalisis Timeline:\n- Target: ${date}\n- Milestone dan deliverables\n- Pertimbangan durasi`;
+          break;
+        default:
+          analysis = `\nAnalisis ${field.label}:\n- Dampak bisnis\n- Pertimbangan teknis\n- Rekomendasi`;
+      }
+
+      return `\nReferensi ${field.label}:\n${fieldValue}${analysis}`;
+    }).filter(Boolean).join('\n\n');
+
+    return formattedContent + (fieldAnalysis ? `\n\n${fieldAnalysis}` : '');
   };
 
   const exportToWord = () => {
-    const preHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+    // Check if user is a Business Analyst
+    if (profile?.role !== 'Business Analyst') {
+      toast.error('Hanya Business Analyst yang dapat mengekspor dokumen');
+      return;
+    }
+
+    // Format the content with proper structure and data
+    let formattedContent = '';
+    if (request?.generatedContent?.info_project) {
+      const content = request.generatedContent.info_project;
+      formattedContent = content.split('\n').map((line, i) => {
+        if (!line.trim()) return '';
+
+        // Section Title (e.g., "1. Introduction")
+        if (line.match(/^\d+\.\s+[A-Z]/)) {
+          return `
+            <div class="section" style="margin-bottom: 25pt; page-break-inside: avoid;">
+              <div class="section-header" style="background-color: #f8fafc; padding: 10pt; border-left: 3pt solid #1e40af; margin-bottom: 15pt;">
+                <h2 style="font-size: 14pt; font-weight: bold; color: #1e40af; margin: 0;">
+                  ${line}
+                </h2>
+              </div>
+            </div>
+          `;
+        }
+
+        // Subsection Title (e.g., "1.1. Background")
+        if (line.match(/^\d+\.\d+\.\s+[A-Z]/)) {
+          return `
+            <div style="margin: 15pt 0 10pt 0;">
+              <h3 style="font-size: 12pt; font-weight: bold; color: #2d3748; margin: 0;">
+                ${line}
+              </h3>
+            </div>
+          `;
+        }
+
+        // Regular Paragraph
+        return `
+          <p style="font-size: 11pt; color: #4a5568; margin: 8pt 0; text-align: justify; line-height: 1.5;">
+            ${line}
+          </p>
+        `;
+      }).join('');
+    }
+
+    // Create document info table
+    const documentInfo = `
+      <div class="document-info" style="margin: 20pt 0; page-break-inside: avoid;">
+        <table style="width: 100%; border-collapse: collapse; border: 1pt solid #e2e8f0;">
+          <tr>
+            <th colspan="4" style="background-color: #1e40af; color: white; padding: 10pt; text-align: center; font-size: 12pt;">
+              INFORMASI DOKUMEN
+            </th>
+          </tr>
+          <tr>
+            <td style="width: 25%; padding: 8pt; border: 1pt solid #e2e8f0; background-color: #f8fafc; font-weight: bold;">Nomor Dokumen</td>
+            <td style="width: 25%; padding: 8pt; border: 1pt solid #e2e8f0;">${request?.nomorSurat || '-'}</td>
+            <td style="width: 25%; padding: 8pt; border: 1pt solid #e2e8f0; background-color: #f8fafc; font-weight: bold;">Tanggal Dibuat</td>
+            <td style="width: 25%; padding: 8pt; border: 1pt solid #e2e8f0;">${request?.createdAt ? new Date(request.createdAt.seconds * 1000).toLocaleDateString('id-ID', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            }) : '-'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0; background-color: #f8fafc; font-weight: bold;">Unit Bisnis</td>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0;">${request?.unitBisnis || '-'}</td>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0; background-color: #f8fafc; font-weight: bold;">Status</td>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0;">${request?.status || '-'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0; background-color: #f8fafc; font-weight: bold;">Aplikasi</td>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0;">${request?.aplikasiDikembangkan || '-'}</td>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0; background-color: #f8fafc; font-weight: bold;">Fitur</td>
+            <td style="padding: 8pt; border: 1pt solid #e2e8f0;">${request?.fiturDikembangkan || '-'}</td>
+          </tr>
+        </table>
+      </div>
+    `;
+
+    const header = `
+      <div style="text-align: center; margin-bottom: 30pt;">
+        <div style="margin-bottom: 20pt;">
+          <img src="${bankLogo}" alt="Bank Logo" style="height: 60pt;" />
+        </div>
+        <div style="border-bottom: 2pt solid #1e40af; padding-bottom: 15pt; margin-bottom: 15pt;">
+          <div style="font-size: 16pt; font-weight: bold; color: #1e40af; margin-bottom: 5pt;">
+            PT BANK PEMBANGUNAN DAERAH JAWA TENGAH
+          </div>
+          <div style="font-size: 24pt; font-weight: bold; color: #1e40af; margin: 15pt 0; text-transform: uppercase;">
+            BUSINESS REQUIREMENTS DOCUMENT
+          </div>
+        </div>
+      </div>
+    `;
+
+    const tableOfContents = `
+      <div class="table-of-contents" style="margin: 30pt 0; page-break-after: always;">
+        <h2 style="font-size: 14pt; font-weight: bold; color: #1e40af; margin-bottom: 15pt; text-align: center;">
+          DAFTAR ISI
+        </h2>
+        <div style="padding: 15pt;">
+          ${selectedTemplate?.structure?.sections.map((section, index) => `
+            <div style="display: flex; justify-content: space-between; margin: 5pt 0; border-bottom: 1pt dotted #e2e8f0; padding: 3pt 0;">
+              <span style="font-weight: ${index === 0 ? 'bold' : 'normal'};">
+                ${toRomanNumeral(index + 1)}. ${section.title}
+              </span>
+              <span style="font-weight: ${index === 0 ? 'bold' : 'normal'};">
+                ${index + 1}
+              </span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    const signatures = `
+      <div style="margin-top: 40pt; page-break-inside: avoid;">
+        <h2 style="font-size: 14pt; font-weight: bold; color: #1e40af; margin-bottom: 20pt; text-align: center; text-transform: uppercase;">
+          Persetujuan Dokumen
+        </h2>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="width: 33.33%; text-align: center; padding: 15pt; vertical-align: top;">
+              <div style="font-weight: bold; color: #666666; margin-bottom: 60pt;">Dibuat oleh:</div>
+              <div style="border-bottom: 1pt solid #000000; width: 80%; margin: 10pt auto;"></div>
+              <div style="font-weight: bold; margin-top: 10pt;">${request?.createdByName || ''}</div>
+              <div style="font-size: 9pt; color: #666666; margin-top: 5pt;">${request?.createdAt ? new Date(request.createdAt.seconds * 1000).toLocaleDateString('id-ID', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              }) : ''}</div>
+            </td>
+            <td style="width: 33.33%; text-align: center; padding: 15pt; vertical-align: top;">
+              <div style="font-weight: bold; color: #666666; margin-bottom: 60pt;">Diperiksa oleh:</div>
+              <div style="border-bottom: 1pt solid #000000; width: 80%; margin: 10pt auto;"></div>
+              <div style="font-weight: bold; margin-top: 10pt;">${request?.assignedAnalystName || ''}</div>
+              <div style="font-size: 9pt; color: #666666; margin-top: 5pt;">${request?.assignedAt ? new Date(request.assignedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              }) : ''}</div>
+            </td>
+            <td style="width: 33.33%; text-align: center; padding: 15pt; vertical-align: top;">
+              <div style="font-weight: bold; color: #666666; margin-bottom: 60pt;">Disetujui oleh:</div>
+              <div style="border-bottom: 1pt solid #000000; width: 80%; margin: 10pt auto;"></div>
+              <div style="font-weight: bold; margin-top: 10pt;">${request?.approvedByName || ''}</div>
+              <div style="font-size: 9pt; color: #666666; margin-top: 5pt;">${request?.approvedAt ? new Date(request.approvedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              }) : ''}</div>
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+
+    const footer = `
+      <div style="margin-top: 40pt; padding-top: 15pt; border-top: 2pt solid #1e40af; text-align: center; font-size: 9pt; color: #666666;">
+        <div style="margin: 3pt 0;">PT Bank Pembangunan Daerah Jawa Tengah © ${new Date().getFullYear()}</div>
+        <div style="margin: 3pt 0;">Dokumen ini diekspor secara otomatis dari sistem BRD</div>
+        <div style="margin: 3pt 0;">Diekspor pada: ${new Date().toLocaleDateString('id-ID', { 
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })}</div>
+      </div>
+    `;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
       <head>
-        <meta charset='utf-8'>
-        <title>Business Requirements Document</title>
+          <meta charset="UTF-8">
+          <title>Business Requirements Document - ${request?.nomorSurat || ''}</title>
         <style>
-          @page Section1 {
-            size: 21cm 29.7cm;
-            margin: 2.54cm 2.54cm 2.54cm 2.54cm;
-            mso-header-margin: 35.4pt;
-            mso-footer-margin: 35.4pt;
-            mso-paper-source: 0;
-          }
-          div.Section1 { page: Section1; }
+            @page {
+              size: A4;
+              margin: 2.54cm;
+            }
           body {
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 12pt;
+              font-family: 'Calibri', sans-serif;
             line-height: 1.6;
-            color: #1a1a1a;
-          }
-          .header {
-            text-align: center;
-            margin-bottom: 2cm;
-          }
-          .logo-container {
-            margin-bottom: 1cm;
-            text-align: center;
-          }
-          .logo { width: 200px; height: auto; }
-          .company-name {
-            font-size: 14pt;
+              color: #333333;
+              margin: 0;
+              padding: 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 10pt 0;
+            }
+            th, td {
+              border: 1pt solid #e2e8f0;
+              padding: 8pt;
+              text-align: left;
+            }
+            th {
+              background-color: #f8fafc;
             font-weight: bold;
-            margin-bottom: 0.5cm;
-          }
-          .divider {
-            width: 80%;
-            margin: 0.5cm auto;
-            border-top: 2px solid black;
-          }
-          h1, h2 { font-family: 'Times New Roman', Times, serif; }
-          h1 {
-            font-size: 14pt;
+              color: #1e40af;
+            }
+            tr:nth-child(even) {
+              background-color: #f8fafc;
+            }
+            ul, ol {
+              margin: 8pt 0;
+              padding-left: 20pt;
+            }
+            li {
+              margin: 5pt 0;
+            }
+            .field-group {
+              margin: 12pt 0;
+              padding: 8pt;
+              background-color: #f8fafc;
+              border-radius: 3pt;
+            }
+            .field-label {
             font-weight: bold;
-            margin-top: 1cm;
-            margin-bottom: 0.5cm;
-          }
-          h2 {
-            font-size: 12pt;
-            font-weight: bold;
-            margin-top: 0.8cm;
-            margin-bottom: 0.4cm;
-          }
-          p { margin-bottom: 0.8em; text-align: justify; }
-          .approval-section {
-            margin-top: 2cm;
-            page-break-inside: avoid;
-          }
-          .signature-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2cm;
-            margin-top: 1cm;
-          }
-          .signature-box {
-            text-align: center;
-          }
-          .signature-line {
-            border-bottom: 1px solid black;
-            margin: 3cm 0 0.5cm 0;
+              color: #1e40af;
+              margin-bottom: 3pt;
+            }
+            .field-value {
+              color: #333333;
+            }
+            @media print {
+              body {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              .page-break {
+                page-break-before: always;
+              }
           }
         </style>
       </head>
       <body>
-        <div class="Section1">
-          <div class="header">
-            <div class="logo-container">
-              <img src="${bankLogo}" alt="Bank Logo" class="logo">
+          ${header}
+          ${documentInfo}
+          ${tableOfContents}
+          <div style="margin: 30pt 0;">
+            ${formattedContent}
             </div>
-            <h1 class="company-name">PT BANK PEMBANGUNAN DAERAH JAWA TENGAH</h1>
-            <div class="divider"></div>
-            <h2>DOKUMEN KEBUTUHAN BISNIS</h2>
-            <h3>${request?.namaProject || 'Untitled Project'}</h3>
-            <p>SEMARANG</p>
-            <p>${new Date().toLocaleDateString('id-ID', {
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric'
-            })}</p>
-          </div>
-          <div class="content">`;
-
-    const postHtml = `
-          </div>
-          <div class="approval-section">
-            <h1>PERSETUJUAN</h1>
-            <div className="signature-grid">
-              <div className="signature-box">
-                <div className="signature-line"></div>
-                <p>Dibuat oleh:</p>
-                <p>${request?.createdByName || ''}</p>
-                <p>${request?.unitBisnis || ''}</p>
-                <p>${new Date(request?.createdAt?.toDate()).toLocaleDateString('id-ID')}</p>
-              </div>
-              <div className="signature-box">
-                <div className="signature-line"></div>
-                <p>Diperiksa oleh:</p>
-                <p>${approvalStatus?.reviewer?.name || ''}</p>
-                <p>${approvalStatus?.reviewer?.role || ''}</p>
-                <p>${approvalStatus?.reviewedAt ? new Date(approvalStatus.reviewedAt.toDate()).toLocaleDateString('id-ID') : ''}</p>
-              </div>
-              <div className="signature-box">
-                <div className="signature-line"></div>
-                <p>Disetujui oleh:</p>
-                <p>${approvalStatus?.approver?.name || ''}</p>
-                <p>${approvalStatus?.approver?.role || ''}</p>
-                <p>${approvalStatus?.approvedAt ? new Date(approvalStatus.approvedAt.toDate()).toLocaleDateString('id-ID') : ''}</p>
-              </div>
-            </div>
-          </div>
-        </div>
+          ${signatures}
+          ${footer}
       </body>
-    </html>`;
+      </html>
+    `;
 
-    // Convert the generatedContent to properly formatted HTML
-    const formattedContent = generatedContent
-      .split('\n')
-      .map(line => {
-        if (/^[IVX]+\./.test(line)) {
-          return `<h1>${line.trim()}</h1>`;
-        }
-        else if (/^\d+\.\d+\./.test(line)) {
-          return `<h2>${line.trim()}</h2>`;
-        }
-        else if (line.trim()) {
-          return `<p>${line.trim()}</p>`;
-        }
-        return '';
-      })
-      .join('\n');
-
-    const html = preHtml + formattedContent + postHtml;
-
-    // Create a new Blob with HTML content
-    const blob = new Blob(['\ufeff', html], {
-      type: 'application/msword'
-    });
-
-    // Create download link
+    const blob = new Blob([htmlContent], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${request?.namaProject || 'BRD'}.doc`;
+    link.download = `BRD_${request?.nomorSurat || 'Document'}.doc`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    toast.success('Dokumen BRD berhasil diekspor ke Word');
   };
 
   const handleDeleteComment = async (comment) => {
@@ -880,30 +1060,26 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
   };
 
   const canEdit = () => {
-    return (
-      (currentTurn === 'analyst' && profile.role === 'Business Analyst') ||
-      (currentTurn === 'requester' && profile.role === 'Business Requester')
-    );
-  };
-
-  useEffect(() => {
-    if (requestId) {
-      const unsubscribe = onSnapshot(doc(db, 'brd_requests', requestId), (doc) => {
-        if (doc.exists()) {
-          const data = doc.data();
-          setRequest(data);
-          setFormData(data.formData || {});
-          setCurrentTurn(data.currentTurn || 'analyst');
-          setSavedSections(data.savedSections || {});
-          if (data.generatedContent) {
-            setGeneratedContent(data.generatedContent);
-          }
-        }
-      });
-
-      return () => unsubscribe();
+    if (request?.status === 'Completed') {
+      return false;
     }
-  }, [requestId]);
+
+    if (!profile || !request) return false;
+
+    const isRequester = profile.role === 'Business Requester';
+    const isAnalyst = profile.role === 'Business Analyst';
+    
+    if (isRequester) {
+      return request.currentEditor === 'requester' && request.createdBy === user.uid;
+    }
+    
+    if (isAnalyst) {
+      return request.currentEditor === 'analyst' && 
+             (request.assignedAnalystId === user.uid || request.assignedTo === user.uid);
+    }
+    
+    return false;
+  };
 
   const handleSaveFields = async () => {
     if (!requestId) return;
@@ -967,8 +1143,8 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
               rows: [
                 new TableRow({
                   children: [
-                    new TableCell({ children: [new Paragraph('Nomor Permintaan')] }),
-                    new TableCell({ children: [new Paragraph(requestId)] })
+                    new TableCell({ children: [new Paragraph('Nomor BRD')] }),
+                    new TableCell({ children: [new Paragraph(request?.nomorSurat)] })
                   ]
                 }),
                 new TableRow({
@@ -982,12 +1158,6 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                       request?.status === 'Rejected' ? 'Ditolak' :
                       request?.status || 'Baru'
                     )] })
-                  ]
-                }),
-                new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph('Nama Proyek')] }),
-                    new TableCell({ children: [new Paragraph(request?.namaProject || '-')] })
                   ]
                 }),
                 new TableRow({
@@ -1074,36 +1244,6 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                   children: [
                     new TableCell({ children: [new Paragraph('Risiko Terkait')] }),
                     new TableCell({ children: [new Paragraph(request?.risikoTerkait || '-')] })
-                  ]
-                })
-              ]
-            }),
-
-            // Template Information
-            new Paragraph({
-              text: 'Informasi Template',
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 400, after: 200 }
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph('Nama Template')] }),
-                    new TableCell({ children: [new Paragraph(selectedTemplate?.name || '-')] })
-                  ]
-                }),
-                new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph('Terakhir Diperbarui Oleh')] }),
-                    new TableCell({ 
-                      children: [new Paragraph(
-                        request?.generatedBy ?
-                        `${request.generatedBy.name} (${request.generatedBy.role})` : 
-                        'Belum dibuat'
-                      )]
-                    })
                   ]
                 })
               ]
@@ -1251,9 +1391,8 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
           <div class="section">
             <div class="section-title">Informasi Permintaan</div>
             <div class="info-grid">
-              <div class="label">Nomor Permintaan:</div>
-              <div class="value">${requestId}</div>
-              
+              <div class="label">Nomor BRD:</div>
+              <div class="value">${request?.nomorSurat}</div>
               <div class="label">Status:</div>
               <div class="value">
                 <span class="status-badge ${
@@ -1269,10 +1408,6 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                     request?.status || 'Baru'}
                 </span>
               </div>
-              
-              <div class="label">Nama Proyek:</div>
-              <div class="value">${request?.namaProject || '-'}</div>
-              
               <div class="label">Nama Aplikasi:</div>
               <div class="value">${request?.aplikasiDikembangkan || '-'}</div>
             </div>
@@ -1315,21 +1450,6 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
               
               <div class="label">Risiko Terkait:</div>
               <div class="value">${request?.risikoTerkait || '-'}</div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title">Informasi Template</div>
-            <div class="info-grid">
-              <div class="label">Nama Template:</div>
-              <div class="value">${selectedTemplate?.name || '-'}</div>
-              
-              <div class="label">Terakhir Diperbarui Oleh:</div>
-              <div class="value">
-                ${request?.generatedBy ?
-                  `${request.generatedBy.name} (${request.generatedBy.role})` :
-                  'Belum dibuat'}
-              </div>
             </div>
           </div>
 
@@ -1388,6 +1508,665 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
       console.error('Error completing request:', error);
       toast.error('Gagal menyelesaikan BRD');
     }
+  };
+
+  // Update handleSaveForm function
+  const handleSaveForm = async () => {
+    try {
+      setIsSaving(true);
+      const requestRef = doc(db, 'brd_requests', requestId);
+      
+      // Get current request data to preserve existing fields
+      const currentRequest = await getDoc(requestRef);
+      if (!currentRequest.exists()) {
+        throw new Error('Request not found');
+      }
+      const currentData = currentRequest.data();
+      
+      // Prepare the update data while preserving required fields
+      const updateData = {
+        ...currentData, // Preserve all existing fields
+        formData,
+        currentEditor: request.currentEditor === 'analyst' ? 'requester' : 'analyst',
+        lastSavedBy: {
+          uid: user.uid,
+          name: profile.namaLengkap,
+          role: profile.role,
+          timestamp: serverTimestamp()
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+        updatedByName: profile.namaLengkap,
+        // Preserve these critical fields
+        createdBy: currentData.createdBy,
+        assignedAnalystId: currentData.assignedAnalystId,
+        assignedTo: currentData.assignedTo,
+        status: currentData.status
+      };
+
+      // Update Firestore
+      await updateDoc(requestRef, updateData);
+
+      // Reset modified state
+      setModifiedFields(new Set());
+      setHasUnsavedChanges(false);
+
+      // Add activity log
+      const activityRef = collection(requestRef, 'activities');
+      await addDoc(activityRef, {
+        type: 'form_update',
+        description: `Form updated and transferred from ${request.currentEditor} to ${request.currentEditor === 'analyst' ? 'requester' : 'analyst'}`,
+        timestamp: serverTimestamp(),
+        userId: user.uid,
+        userName: profile.namaLengkap,
+        userRole: profile.role
+      });
+
+      toast.success('Perubahan berhasil disimpan. Sekarang giliran ' + 
+        (request.currentEditor === 'analyst' ? 'Requester' : 'analyst') + '.');
+    } catch (error) {
+      console.error('Error saving form:', error);
+      toast.error('Gagal menyimpan perubahan: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRefreshForm = async () => {
+    try {
+      const requestDoc = await getDoc(doc(db, 'brd_requests', requestId));
+      if (!requestDoc.exists()) {
+        throw new Error('Request not found');
+      }
+      const requestData = requestDoc.data();
+      setFormData(requestData.formData || {});
+      setModifiedFields(new Set());
+      setHasUnsavedChanges(false);
+      toast.success('Form refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing form:', error);
+      toast.error('Failed to refresh form');
+    }
+  };
+
+  const handlePrintBRD = () => {
+    // Check if user is a Business Analyst
+    if (profile?.role !== 'Business Analyst') {
+      toast.error('Hanya Business Analyst yang dapat mencetak dokumen');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    
+    // Parse and format the content properly
+    let formattedContent = '';
+    if (request?.generatedContent?.info_project) {
+      const content = request.generatedContent.info_project;
+      formattedContent = content.split('\n').map((line, i) => {
+        if (!line.trim()) return '';
+
+        // Main Section Title (e.g., "1. Introduction")
+        if (line.match(/^\d+\.\s+[A-Z]/)) {
+          return `
+            <div class="main-section">
+              <div class="section-header">
+                <span class="section-number">${line.split('.')[0]}</span>
+                <h2>${line.split('.')[1].trim()}</h2>
+              </div>
+            </div>
+          `;
+        }
+
+        // Subsection Title (e.g., "1.1. Background")
+        if (line.match(/^\d+\.\d+\.\s+[A-Z]/)) {
+          return `
+            <div class="subsection">
+              <h3>
+                <span class="subsection-number">${line.split('.').slice(0, 2).join('.')}.</span>
+                ${line.split('.').slice(2).join('.').trim()}
+              </h3>
+            </div>
+          `;
+        }
+
+        // Sub-subsection Title (e.g., "1.1.1. Context")
+        if (line.match(/^\d+\.\d+\.\d+\.\s+[A-Z]/)) {
+          return `
+            <div class="sub-subsection">
+              <h4>
+                <span class="sub-subsection-number">${line.split('.').slice(0, 3).join('.')}.</span>
+                ${line.split('.').slice(3).join('.').trim()}
+              </h4>
+            </div>
+          `;
+        }
+
+        // Bullet Points
+        if (line.trim().startsWith('-') || line.trim().startsWith('•')) {
+          return `
+            <div class="bullet-point">
+              <span class="bullet">•</span>
+              <span class="bullet-content">${line.substring(1).trim()}</span>
+            </div>
+          `;
+        }
+
+        // Reference Block
+        if (line.toLowerCase().includes('referensi')) {
+          return `
+            <div class="reference-block">
+              <div class="reference-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                  <path d="M12 6v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <div class="reference-content">${line}</div>
+            </div>
+          `;
+        }
+
+        // Analysis Block
+        if (line.toLowerCase().includes('analisis')) {
+          return `
+            <div class="analysis-block">
+              <div class="analysis-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                  <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+          </div>
+          <div class="analysis-content">${line}</div>
+        </div>
+          `;
+        }
+
+        // Regular Paragraph
+        return `<p class="content-paragraph">${line}</p>`;
+      }).join('');
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Business Requirements Document - ${request?.nomorSurat || ''}</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 2.54cm;
+            }
+            
+            body {
+              font-family: 'Calibri', sans-serif;
+              line-height: 1.6;
+              color: #1a202c;
+              margin: 0;
+              padding: 0;
+              background: white;
+            }
+
+            .container {
+              max-width: 210mm;
+              margin: 0 auto;
+              padding: 20px;
+            }
+
+            .header {
+              text-align: center;
+              margin-bottom: 40px;
+              padding-bottom: 20px;
+              border-bottom: 2px solid #1e40af;
+            }
+
+            .bank-logo {
+              height: 60px;
+              margin-bottom: 15px;
+            }
+
+            .bank-name {
+              font-size: 16px;
+              font-weight: bold;
+              color: #1e40af;
+              margin-bottom: 5px;
+            }
+
+            .doc-title {
+              font-size: 24px;
+              font-weight: bold;
+              color: #1e40af;
+              margin: 15px 0;
+              text-transform: uppercase;
+            }
+
+            .doc-meta {
+              display: grid;
+              grid-template-columns: repeat(2, 1fr);
+              gap: 15px;
+              margin: 20px auto;
+              padding: 15px;
+              background: #f8fafc;
+              border-radius: 8px;
+              font-size: 12px;
+            }
+
+            .main-section {
+              margin: 30px 0;
+              page-break-inside: avoid;
+            }
+
+            .section-header {
+              display: flex;
+              align-items: center;
+              background: linear-gradient(to right, #f8fafc, white);
+              padding: 12px 15px;
+              border-left: 4px solid #1e40af;
+              margin-bottom: 20px;
+            }
+
+            .section-number {
+              font-size: 18px;
+              font-weight: bold;
+              color: #1e40af;
+              margin-right: 10px;
+            }
+
+            .section-header h2 {
+              font-size: 18px;
+              font-weight: bold;
+              color: #1e40af;
+              margin: 0;
+            }
+
+            .subsection {
+              margin: 20px 0;
+              padding-left: 20px;
+            }
+
+            .subsection h3 {
+              font-size: 14px;
+              font-weight: bold;
+              color: #2d3748;
+              margin: 0 0 10px 0;
+            }
+
+            .sub-subsection {
+              margin: 15px 0;
+              padding-left: 40px;
+            }
+
+            .sub-subsection h4 {
+              font-size: 12px;
+              font-weight: bold;
+              color: #4a5568;
+              margin: 0 0 8px 0;
+            }
+
+            .bullet-point {
+              display: flex;
+              align-items: start;
+              margin: 8px 0;
+              padding-left: 40px;
+            }
+
+            .bullet {
+              color: #4a5568;
+              margin-right: 10px;
+            }
+
+            .bullet-content {
+              flex: 1;
+              color: #4a5568;
+            }
+
+            .reference-block, .analysis-block {
+              display: flex;
+              align-items: start;
+              margin: 15px 0;
+              padding: 12px;
+              border-radius: 6px;
+            }
+
+            .reference-block {
+              background-color: #ebf8ff;
+              border-left: 4px solid #4299e1;
+            }
+
+            .analysis-block {
+              background-color: #e6fffa;
+              border-left: 4px solid #38b2ac;
+            }
+
+            .reference-icon, .analysis-icon {
+              margin-right: 12px;
+              padding-top: 2px;
+            }
+
+            .reference-content, .analysis-content {
+              flex: 1;
+              font-size: 12px;
+            }
+
+            .content-paragraph {
+              font-size: 12px;
+              color: #4a5568;
+              margin: 12px 0;
+              text-align: justify;
+              line-height: 1.8;
+              padding-left: 40px;
+            }
+
+            .signature-section {
+              margin-top: 50px;
+              page-break-inside: avoid;
+            }
+
+            .signature-title {
+              font-size: 16px;
+              font-weight: bold;
+              text-align: center;
+              margin-bottom: 30px;
+              color: #1e40af;
+            }
+
+            .signature-grid {
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 30px;
+            }
+
+            .signature-box {
+              text-align: center;
+            }
+
+            .signature-role {
+              font-size: 12px;
+              color: #666;
+              margin-bottom: 50px;
+            }
+
+            .signature-line {
+              width: 80%;
+              margin: 10px auto;
+              border-bottom: 1px solid #000;
+            }
+
+            .signature-name {
+              font-size: 12px;
+              font-weight: bold;
+              margin-top: 5px;
+            }
+
+            .signature-date {
+              font-size: 10px;
+              color: #666;
+              margin-top: 5px;
+            }
+
+            .footer {
+              margin-top: 50px;
+              padding-top: 20px;
+              border-top: 2px solid #1e40af;
+              text-align: center;
+              font-size: 10px;
+              color: #666;
+              page-break-inside: avoid;
+            }
+
+            @media print {
+              body {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              .page-break {
+                page-break-before: always;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <img src="${bankLogo}" alt="Bank Logo" class="bank-logo" />
+              <div class="bank-name">PT BANK PEMBANGUNAN DAERAH JAWA TENGAH</div>
+              <div class="doc-title">BUSINESS REQUIREMENTS DOCUMENT</div>
+              <div class="doc-number">Nomor: ${request?.nomorSurat || ''}</div>
+            </div>
+
+            <div class="doc-meta">
+              <div>
+                <strong>Nomor Dokumen:</strong><br/>
+                ${request?.nomorSurat || '-'}
+              </div>
+              <div>
+                <strong>Tanggal Dibuat:</strong><br/>
+                ${request?.createdAt ? new Date(request.createdAt.seconds * 1000).toLocaleDateString('id-ID', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                }) : '-'}
+              </div>
+              <div>
+                <strong>Unit Bisnis:</strong><br/>
+                ${request?.unitBisnis || '-'}
+              </div>
+              <div>
+                <strong>Aplikasi:</strong><br/>
+                ${request?.aplikasiDikembangkan || '-'}
+              </div>
+            </div>
+
+            <div class="content">
+              ${formattedContent}
+            </div>
+
+            <div class="signature-section">
+              <div class="signature-title">Persetujuan Dokumen</div>
+              <div class="signature-grid">
+                <div class="signature-box">
+                  <div class="signature-role">Dibuat oleh:</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">${request?.createdByName || ''}</div>
+                  <div class="signature-date">${request?.createdAt ? new Date(request.createdAt.seconds * 1000).toLocaleDateString('id-ID', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  }) : ''}</div>
+                </div>
+                <div class="signature-box">
+                  <div class="signature-role">Diperiksa oleh:</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">${request?.assignedAnalystName || ''}</div>
+                  <div class="signature-date">${request?.assignedAt ? new Date(request.assignedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  }) : ''}</div>
+                </div>
+                <div class="signature-box">
+                  <div class="signature-role">Disetujui oleh:</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">${request?.approvedByName || ''}</div>
+                  <div class="signature-date">${request?.approvedAt ? new Date(request.approvedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  }) : ''}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="footer">
+              <div>PT Bank Pembangunan Daerah Jawa Tengah © ${new Date().getFullYear()}</div>
+              <div>Dokumen ini dicetak secara otomatis dari sistem BRD</div>
+              <div>Dicetak pada: ${new Date().toLocaleDateString('id-ID', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}</div>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
+  };
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank');
+    
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Business Requirement Document</title>
+        <style>
+          @page {
+            size: A4;
+            margin: 2cm;
+          }
+          body {
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 12pt;
+            line-height: 1.5;
+            margin: 0;
+            padding: 2cm;
+          }
+          .header {
+            text-align: center;
+            margin-bottom: 30px;
+          }
+          .logo {
+            width: 150px;
+            margin-bottom: 20px;
+          }
+          .title {
+            font-size: 16pt;
+            font-weight: bold;
+            margin: 20px 0;
+          }
+          .section {
+            margin: 20px 0;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+          }
+          th, td {
+            border: 1px solid black;
+            padding: 8px;
+            text-align: left;
+          }
+          .signature-section {
+            margin-top: 50px;
+          }
+          .signature-box {
+            height: 80px;
+          }
+          @media print {
+            body { padding: 0; }
+            button { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <img src="${bankLogo}" class="logo" alt="Bank Logo" />
+          <div class="title">BUSINESS REQUIREMENT DOCUMENT</div>
+          <div>No. BRD: ${request?.noBRD || ''}</div>
+          <div>Tanggal: ${formatDate(new Date())}</div>
+        </div>
+
+        <div class="section">
+          <table>
+            <tr>
+              <td class="field-label">Tanggal Permintaan</td>
+              <td>${formatDate(formData?.tanggalPermintaan)}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Unit Bisnis</td>
+              <td>${formData?.unitBisnis || ''}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Nama Pemohon</td>
+              <td>${formData?.namaPemohon || ''}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Jabatan Pemohon</td>
+              <td>${formData?.jabatanPemohon || ''}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Nama Project</td>
+              <td>${formData?.namaProject || ''}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Jenis Permintaan</td>
+              <td>${formData?.jenisPermintaan || ''}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Prioritas</td>
+              <td>${formData?.prioritas || ''}</td>
+            </tr>
+            <tr>
+              <td class="field-label">Target Implementasi</td>
+              <td>${formatDate(formData?.targetImplementasi)}</td>
+            </tr>
+          </table>
+        </div>
+        
+        ${Object.entries(generatedContent).map(([section, content]) => `
+          <div class="section">
+            ${content}
+          </div>
+        `).join('')}
+
+        <div class="signature-section">
+          <table>
+            <tr>
+              <th>Dibuat Oleh</th>
+              <th>Diperiksa Oleh</th>
+              <th>Disetujui Oleh</th>
+            </tr>
+            <tr>
+              <td class="signature-box"></td>
+              <td class="signature-box"></td>
+              <td class="signature-box"></td>
+            </tr>
+            <tr>
+              <td>${formData?.dibuatOleh || ''}</td>
+              <td>${formData?.diperiksaOleh || ''}</td>
+              <td>${formData?.disetujuiOleh || ''}</td>
+            </tr>
+            <tr>
+              <td>${formatDate(formData?.dibuatTanggal)}</td>
+              <td>${formatDate(formData?.diperiksaTanggal)}</td>
+              <td>${formatDate(formData?.disetujuiTanggal)}</td>
+            </tr>
+          </table>
+        </div>
+
+        <script>
+          window.onload = function() {
+            window.print();
+          }
+        </script>
+      </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
   };
 
   if (loading) {
@@ -1471,7 +2250,9 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
           
           <div className="flex items-center space-x-4">
             {/* Complete Button */}
-            {profile.role === 'Business Analyst' && (request?.status === 'Generated' || request?.status === 'In Progress') && (
+            {profile.role === 'Business Analyst' && 
+             (request?.status === 'Generated' || request?.status === 'In Progress') && 
+             request?.currentEditor !== 'requester' && (
               <button
                 onClick={() => {
                   if (window.confirm('Apakah Anda yakin ingin menyelesaikan BRD ini? Status akan diubah menjadi Selesai.')) {
@@ -1495,7 +2276,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                   {new Date(request.lastUpdated.toDate()).toLocaleDateString('id-ID', {
                     day: 'numeric',
                     month: 'long',
-                    year: 'numeric',
+            year: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit'
                   })}
@@ -1515,16 +2296,16 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
           <div className="bg-white p-4 rounded-xl shadow-sm">
             <h3 className="text-sm font-medium text-gray-500 mb-2">Business Analyst</h3>
             <p className="text-base font-semibold text-gray-900">{request?.assignedAnalystName || 'Belum ditugaskan'}</p>
-            <p className="text-sm text-gray-600">{request?.assignedAnalystId|| '-'}</p>
+            <p className="text-sm text-gray-600">{profile?.unitBisnis|| '-'}</p>
           </div>
           
           <div className="bg-white p-4 rounded-xl shadow-sm">
             <h3 className="text-sm font-medium text-gray-500 mb-2">Aplikasi</h3>
             <p className="text-base font-semibold text-gray-900">{request?.aplikasiDikembangkan || '-'}</p>
             <p className="text-sm text-gray-600">{request?.nomorSurat|| '-'}</p>
+            </div>
+            </div>
           </div>
-        </div>
-      </div>
 
       {/* Main Content */}
       <div className="bg-white rounded-2xl shadow-lg">
@@ -1598,7 +2379,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
               )}
             </button>
           </nav>
-        </div>
+      </div>
 
         {/* Tab Content */}
         <div className="p-6">
@@ -1609,11 +2390,11 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                   <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                   </svg>
-                </div>
+        </div>
                 <div className="ml-3">
                   <h3 className="text-sm font-medium text-red-800">Error</h3>
                   <p className="mt-1 text-sm text-red-700">{error}</p>
-                </div>
+          </div>
                 <div className="ml-auto pl-3">
                   <div className="-mx-1.5 -my-1.5">
                     <button
@@ -1625,9 +2406,9 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                         <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                       </svg>
                     </button>
-                  </div>
-                </div>
-              </div>
+          </div>
+        </div>
+      </div>
             </div>
           )}
 
@@ -1641,14 +2422,13 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                       <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center shadow-lg">
                         <span className="text-white font-bold text-xl">
                           {request?.namaProject?.charAt(0).toUpperCase() || 'P'}
-                        </span>
+              </span>
                       </div>
                       <div>
                         <h3 className="text-xl font-semibold text-gray-900">Request Details</h3>
                         <p className="text-sm text-gray-500 mt-0.5">BRD Request #{requestId?.slice(-6)}</p>
                       </div>
-                    </div>
-                    {profile.role === 'Business Analyst' && (
+                      {profile.role === 'Business Analyst' && (
                       <div className="flex items-center space-x-3">
                         <button
                           onClick={exportRequestDetailsToWord}
@@ -1670,6 +2450,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                         </button>
                       </div>
                     )}
+                    </div>
                   </div>
                 </div>
                 <div className="p-6">
@@ -1718,18 +2499,41 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                       </div>
                       <div className="px-6 py-4 space-y-6">
                         <div className="flex items-start space-x-4">
-                          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-green-100 to-green-200 flex items-center justify-center">
-                            <span className="text-green-700 font-semibold text-lg">{request?.createdByName?.charAt(0).toUpperCase()}</span>
-                          </div>
+                          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-green-100 to-green-200 flex items-center justify-center overflow-hidden">
+                            {profile?.photoURL ? (
+                              <img 
+                                src={profile.photoURL} 
+                                alt={profile.namaLengkap} 
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-green-700 font-semibold text-lg">
+                                {request?.createdByName?.charAt(0).toUpperCase()}
+              </span>
+                            )}
+            </div>
                           <div>
                             <p className="text-base text-gray-900 font-medium">{request?.createdByName}</p>
                             <p className="text-sm text-gray-500">{request?.unitBisnis}</p>
                             <p className="text-sm text-gray-500">{request?.createdByEmail}</p>
-                          </div>
-                        </div>
+        </div>
+      </div>
                         <div className="pt-4 border-t border-gray-100">
                           <label className="block text-sm font-medium text-gray-500 mb-1.5">Contact Information</label>
-                          <p className="text-base text-gray-900">{request?.nomorSurat || '-'}</p>
+                          <div className="space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                              </svg>
+                              <p className="text-base text-gray-900">{profile?.noTelp || '-'}</p>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                              </svg>
+                              <p className="text-base text-gray-900">{request?.createdByEmail || profile?.email || '-'}</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1742,12 +2546,12 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                             <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                             </svg>
-                          </div>
+      </div>
                           <h3 className="text-lg font-medium text-gray-900">Development Information</h3>
                         </div>
                       </div>
                       <div className="px-6 py-4 space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1  md:grid-cols-1 gap-6">
                           <div>
                             <label className="block text-sm font-medium text-gray-500 mb-1.5">Background</label>
                             <div className="bg-gray-50 rounded-lg p-3">
@@ -1795,7 +2599,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                         </div>
                       </div>
                       <div className="px-6 py-4 space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
                           <div>
                             <label className="block text-sm font-medium text-gray-500 mb-1.5">Status</label>
                             <p className="mt-1">
@@ -1815,7 +2619,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                             <p className="text-base text-gray-900">
                               {request?.createdAt?.toDate().toLocaleDateString('id-ID', {
                                 day: 'numeric',
-                                month: 'long',
+          month: 'long',
                                 year: 'numeric'
                               })}
                             </p>
@@ -1824,14 +2628,14 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                             <label className="block text-sm font-medium text-gray-500 mb-1.5">Last Updated</label>
                             <p className="text-base text-gray-900">
                               {request?.updatedAt?.toDate().toLocaleDateString('id-ID', {
-                                day: 'numeric',
+          day: 'numeric',
                                 month: 'long',
                                 year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
+          hour: '2-digit',
+          minute: '2-digit'
                               })}
                             </p>
-                          </div>
+      </div>
                           {request?.assignedTo && (
                             <div>
                               <label className="block text-sm font-medium text-gray-500 mb-1.5">Business Analyst</label>
@@ -1853,68 +2657,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                         </div>
                       </div>
                     </div>
-
-                    {/* Approval Information */}
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden lg:col-span-2 hover:shadow-md transition-shadow duration-200">
-                      <div className="px-6 py-4 bg-gradient-to-r from-indigo-50 to-white border-b border-gray-200">
-                        <div className="flex items-center space-x-2">
-                          <div className="p-2 bg-indigo-100 rounded-lg">
-                            <svg className="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                            </svg>
                           </div>
-                          <h3 className="text-lg font-medium text-gray-900">Approval Information</h3>
-                        </div>
-                      </div>
-                      <div className="px-6 py-4 space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <div className="bg-gray-50 rounded-lg p-4 flex flex-col items-center justify-center">
-                            <div className="p-2 bg-blue-100 rounded-lg mb-2">
-                              <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                              </svg>
-                            </div>
-                            <p className="text-sm font-medium text-gray-900">Created By</p>
-                            <p className="text-base font-semibold text-gray-900">{request?.createdByName}</p>
-                            <p className="text-sm text-gray-500">{request?.unitBisnis}</p>
-                            <p className="text-xs text-gray-500">
-                              {request?.createdAt?.toDate().toLocaleDateString('id-ID')}
-                            </p>
-                          </div>
-                          <div className="bg-gray-50 rounded-lg p-4 flex flex-col items-center justify-center">
-                            <div className="p-2 bg-yellow-100 rounded-lg mb-2">
-                              <svg className="h-5 w-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                            </div>
-                            <p className="text-sm font-medium text-gray-900">Reviewed By</p>
-                            <p className="text-base font-semibold text-gray-900">{approvalStatus?.reviewer?.name || '-'}</p>
-                            <p className="text-sm text-gray-500">{approvalStatus?.reviewer?.role || '-'}</p>
-                            <p className="text-xs text-gray-500">
-                              {approvalStatus?.reviewedAt ? 
-                                new Date(approvalStatus.reviewedAt.toDate()).toLocaleDateString('id-ID') : 
-                                '-'}
-                            </p>
-                          </div>
-                          <div className="bg-gray-50 rounded-lg p-4 flex flex-col items-center justify-center">
-                            <div className="p-2 bg-green-100 rounded-lg mb-2">
-                              <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            </div>
-                            <p className="text-sm font-medium text-gray-900">Approved By</p>
-                            <p className="text-base font-semibold text-gray-900">{approvalStatus?.approver?.name || '-'}</p>
-                            <p className="text-sm text-gray-500">{approvalStatus?.approver?.role || '-'}</p>
-                            <p className="text-xs text-gray-500">
-                              {approvalStatus?.approvedAt ? 
-                                new Date(approvalStatus.approvedAt.toDate()).toLocaleDateString('id-ID') : 
-                                '-'}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -1929,7 +2672,7 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                     <div>
                       <h3 className="text-lg font-medium text-gray-900">Pilih Template</h3>
                       <p className="mt-1 text-sm text-gray-500">Pilih template untuk membuat Dokumen Kebutuhan Bisnis.</p>
-                    </div>
+            </div>
                     <div className="text-sm text-gray-500">
                       {templates.length} {templates.length === 1 ? 'template tersedia' : 'template tersedia'}
                     </div>
@@ -1940,37 +2683,37 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                       <div
                         key={template.id}
                         onClick={() => handleTemplateSelect(template)}
-                        className={`relative group rounded-lg border-2 ${
+                        className={`relative group rounded-xl border-2 ${
                           selectedTemplate?.id === template.id
-                            ? 'border-blue-500 ring-2 ring-blue-200'
-                            : 'border-gray-200 hover:border-blue-500'
-                        } bg-white p-6 hover:shadow-lg transition-all duration-200 cursor-pointer`}
+                            ? 'border-blue-500 ring-4 ring-blue-100'
+                            : 'border-gray-200 hover:border-blue-500 hover:shadow-lg'
+                        } bg-white p-6 transition-all duration-200 cursor-pointer transform hover:-translate-y-1`}
                       >
                         <div className="flex items-start space-x-4">
                           <div className="flex-shrink-0">
-                            <div className="h-10 w-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 flex items-center justify-center shadow-sm group-hover:shadow-md transition-all">
+                              <svg className="h-6 w-6 transform group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                               </svg>
                             </div>
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="text-lg font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
+                            <h4 className="text-lg font-semibold text-gray-900 group-hover:text-blue-600 transition-colors line-clamp-2">
                               {template.name}
                             </h4>
-                            <p className="mt-1 text-sm text-gray-500">{template.description}</p>
-                            <div className="mt-3 flex items-center space-x-4 text-sm text-gray-500">
-                              <div className="flex items-center">
-                                <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <p className="mt-1 text-sm text-gray-500 line-clamp-3">{template.description}</p>
+                            <div className="mt-4 flex items-center space-x-4 text-sm">
+                              <div className="flex items-center px-2.5 py-1 rounded-full bg-blue-50 text-blue-700">
+                                <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                                 </svg>
-                                <span>{template.structure?.sections?.length || 0} bagian</span>
+                                <span className="font-medium">{template.structure?.sections?.length || 0} bagian</span>
                               </div>
-                              <div className="flex items-center">
-                                <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <div className="flex items-center px-2.5 py-1 rounded-full bg-green-50 text-green-700">
+                                <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2z" />
                                 </svg>
-                                <span>
+                                <span className="font-medium">
                                   {template.structure?.sections?.reduce(
                                     (total, section) => total + (section.fieldConfigs?.length || 0),
                                     0
@@ -1981,157 +2724,295 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                           </div>
                         </div>
                         <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <svg className="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <div className="p-2 rounded-full bg-blue-500 text-white transform rotate-45">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                           </svg>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
               ) : (!request?.templateId && !selectedTemplate && profile.role !== 'Business Analyst') ? (
-                <div className="text-center py-12">
-                  <div className="mx-auto h-16 w-16 flex items-center justify-center rounded-full bg-blue-100">
-                    <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                  <div className="mx-auto h-20 w-20 flex items-center justify-center rounded-full bg-blue-100">
+                    <svg className="h-10 w-10 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
                   </div>
-                  <h3 className="mt-4 text-lg font-medium text-gray-900">Menunggu Pemilihan Template</h3>
-                  <p className="mt-2 text-sm text-gray-500">
-                    Mohon tunggu Business Analyst untuk memilih template untuk permintaan BRD ini.
+                  <h3 className="mt-4 text-xl font-medium text-gray-900">Menunggu Pemilihan Template</h3>
+                  <p className="mt-2 text-sm text-gray-500 max-w-md mx-auto">
+                    Mohon tunggu Business Analyst untuk memilih template yang sesuai untuk permintaan BRD ini.
                   </p>
                 </div>
               ) : (selectedTemplate || request?.templateId) && (
                 <div className="space-y-8">
                   {/* Show selected template info */}
-                  <div className="flex justify-between items-center bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                  <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-all duration-200">
+                    <div className="flex justify-between items-center">
                     <div className="flex items-center space-x-4">
-                      <div className="h-12 w-12 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <div className="h-14 w-14 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 text-white flex items-center justify-center shadow-md">
+                          <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                       </div>
                       <div>
-                        <h3 className="text-lg font-medium text-gray-900">{selectedTemplate?.name || request?.templateName}</h3>
-                        <p className="text-sm text-gray-500">{selectedTemplate?.description || request?.templateDescription}</p>
+                          <h3 className="text-xl font-semibold text-gray-900">{selectedTemplate?.name || request?.templateName}</h3>
+                          <p className="text-sm text-gray-500 mt-1">{selectedTemplate?.description || request?.templateDescription}</p>
                       </div>
                     </div>
                     {profile.role === 'Business Analyst' && (
                     <button
                       onClick={handleChangeTemplate}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200"
                     >
-                      <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg className="h-4 w-4 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                       </svg>
                       Ganti Template
                     </button>
                     )}
+                    </div>
                   </div>
 
                   {/* Template Fields Form */}
-                  <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="p-6">
                       <div className="flex justify-between items-center mb-6">
-                        <h4 className="text-lg font-medium text-gray-900">Kolom Template</h4>
-                        <div className="flex items-center space-x-4">
-                          <div className="flex items-center space-x-2">
-                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                              request?.currentEditor === 'analyst' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
-                            }`}>
-                              Editor Saat Ini: {request?.currentEditor === 'analyst' ? 'Business Analyst' : 'Pemohon'}
+                        <div className="flex items-center space-x-3">
+                          <h4 className="text-lg font-medium text-gray-900">Form Template</h4>
+                          <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium ${
+                            request?.currentEditor === 'analyst' ? 'bg-gradient-to-r from-blue-100 to-blue-200 text-blue-800 shadow-sm' : 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 shadow-sm'
+                          }`}>
+                            Editor: {request?.currentEditor === 'analyst' ? 'Business Analyst' : 'Requester'}
                             </span>
+                        </div>
+                      </div>
+
+                      {/* Enhanced instruction panel with better visual hierarchy */}
+                      <div className="mb-6 bg-gradient-to-r from-blue-50 to-white border-l-4 border-blue-500 rounded-lg overflow-hidden shadow-sm">
+                        <div className="p-4">
+                          <div className="flex">
+                            <div className="flex-shrink-0">
+                              <div className="p-2 bg-blue-100 rounded-lg">
+                                <svg className="h-6 w-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
+                                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                                </svg>
+                              </div>
+                            </div>
+                            <div className="ml-4 flex-1">
+                              <h3 className="text-lg font-semibold text-blue-900 mb-2">Petunjuk Penggunaan Form</h3>
+                              <div className="space-y-4">
+                                {/* Current Editor Status */}
+                                <div className="p-3 bg-white rounded-lg border border-blue-100">
+                                  <span className="text-sm font-medium text-blue-800">
+                                    Status Editor Saat Ini: {request?.currentEditor === 'analyst' ? 'Business Analyst' : 'Requester'}
+                                  </span>
+                                </div>
+
+                                {/* Role-specific instructions */}
+                                <div className="text-sm text-gray-700 space-y-4">
+                                  {profile.role === 'Business Analyst' ? (
+                                    <>
+                                      <div className="space-y-2">
+                                        <p className="font-medium text-blue-900">Sebagai Business Analyst:</p>
+                                        <div className="ml-4 space-y-2">
+                                          <p className="flex items-center">
+                                            <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 mr-2">1</span>
+                                            Anda dapat mengedit form saat status "Editor: Business Analyst"
+                                          </p>
+                                          <p className="flex items-center">
+                                            <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 mr-2">2</span>
+                                            Setelah selesai mengisi, klik "Tanyakan & Serahkan" untuk menyimpan dan mengirim ke Requester
+                                          </p>
+                                          <p className="flex items-center">
+                                            <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 mr-2">3</span>
+                                            Form akan terkunci sampai Requester mengirimkan kembali
+                                          </p>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Refresh button instruction */}
+                                      <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                                        <p className="flex items-center text-yellow-800">
+                                          <svg className="h-5 w-5 mr-2 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                          </svg>
+                                          <strong>Penting:</strong> Klik tombol "Refresh" saat giliran Anda untuk memuat perubahan terbaru dari Requester
+                                        </p>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="space-y-2">
+                                        <p className="font-medium text-blue-900">Sebagai Requester:</p>
+                                        <div className="ml-4 space-y-2">
+                                          <p className="flex items-center">
+                                            <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 mr-2">1</span>
+                                            Anda dapat mengedit form saat status "Editor: Requester"
+                                          </p>
+                                          <p className="flex items-center">
+                                            <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 mr-2">2</span>
+                                            Setelah selesai mengisi, klik "Setujui & Serahkan" untuk menyimpan dan mengirim ke Business Analyst
+                                          </p>
+                                          <p className="flex items-center">
+                                            <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 mr-2">3</span>
+                                            Form akan terkunci sampai Business Analyst mengirimkan kembali
+                                          </p>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Refresh button instruction */}
+                                      <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                                        <p className="flex items-center text-yellow-800">
+                                          <svg className="h-5 w-5 mr-2 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                          </svg>
+                                          <strong>Penting:</strong> Klik tombol "Refresh" saat giliran Anda untuk memuat perubahan terbaru dari Business Analyst
+                                        </p>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-4 pb-5">
                             {((request?.currentEditor === 'analyst' && profile.role === 'Business Analyst') ||
                               (request?.currentEditor === 'requester' && profile.role !== 'Business Analyst')) && (
+                          <div className="flex items-center space-x-3">
                               <button
-                                onClick={async () => {
-                                  try {
-                                    const requestRef = doc(db, 'brd_requests', requestId);
-                                    await updateDoc(requestRef, {
-                                      savedFields: formData,
-                                      currentEditor: request.currentEditor === 'analyst' ? 'requester' : 'analyst',
-                                      lastSavedBy: {
-                                        uid: user.uid,
-                                        name: profile.namaLengkap,
-                                        role: profile.role,
-                                        timestamp: serverTimestamp()
-                                      },
-                                      updatedAt: serverTimestamp(),
-                                      updatedBy: user.uid,
-                                      updatedByName: profile.namaLengkap
-                                    });
-                                    toast.success('Kolom berhasil disimpan. Sekarang giliran ' + 
-                                      (request.currentEditor === 'analyst' ? 'pemohon' : 'analyst') + '.');
-                                  } catch (error) {
-                                    console.error('Error saving fields:', error);
-                                    toast.error('Gagal menyimpan kolom');
-                                  }
-                                }}
-                                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                              >
+                              onClick={handleRefreshForm}
+                              className="inline-flex items-center px-4 py-2.5 border border-blue-300 rounded-lg shadow-sm text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 hover:border-blue-400 hover:shadow focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 group relative"
+                            >
+                              <svg className="h-4 w-4 mr-1.5 text-blue-600 group-hover:animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              Refresh Form
+                            </button>
+                            <button
+                              onClick={handleSaveForm}
+                              disabled={isSaving || !hasUnsavedChanges}
+                              className={`inline-flex items-center px-6 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white transition-all duration-200
+                                ${isSaving || !hasUnsavedChanges 
+                                  ? 'bg-gray-400 cursor-not-allowed' 
+                                  : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'}`}
+                            >
+                              {isSaving ? (
+                                <>
+                                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  Saving...
+                                </>
+                              ) : (
+                                <>
                                 <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
                                 </svg>
-                                Simpan & Serahkan ke {request?.currentEditor === 'analyst' ? 'Pemohon' : 'Analyst'}
-                              </button>
+                                  {profile.role === 'Business Analyst' ? 'Tanyakan & Serahkan' : 'Setujui & Serahkan'}
+                                </>
                             )}
+                            </button>
                           </div>
-                          {request?.lastSavedBy && (
-                            <p className="text-sm text-gray-500">
-                              Terakhir disimpan oleh {request.lastSavedBy.name} ({request.lastSavedBy.role})
-                            </p>
                           )}
                         </div>
-                      </div>
-                      <div className={`space-y-8 ${
-                        ((request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
-                         (request?.currentEditor === 'requester' && profile.role === 'Business Analyst'))
-                        ? 'opacity-50 pointer-events-none'
-                        : ''
-                      }`}>
+
+                      <div className={`space-y-8 ${!canEdit() ? 'opacity-50' : ''}`}>
                         {(selectedTemplate?.structure?.sections || request?.templateStructure?.sections)?.map((section, sectionIndex) => (
-                          <div key={sectionIndex} className="space-y-4">
-                            <div className="flex items-center space-x-2">
+                          <div key={sectionIndex} className="bg-white rounded-xl border border-gray-200 overflow-hidden transition-all duration-200 hover:shadow-md">
+                            <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                  <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-blue-100 text-blue-600">
+                                    <span className="text-sm font-semibold">{toRomanNumeral(sectionIndex + 1)}</span>
+                                  </div>
+                                  <div>
                               <h5 className="text-base font-medium text-gray-900">{section.title}</h5>
                               {section.description && (
-                                <span className="text-sm text-gray-500">({section.description})</span>
+                                      <p className="text-sm text-gray-500 mt-0.5">{section.description}</p>
                               )}
                             </div>
-                            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 pl-4 border-l-2 border-gray-200">
+                                </div>
+                                <span className="text-sm text-gray-500">
+                                  {section.fieldConfigs?.length || 0} fields
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="p-6">
+                              <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
                               {section.fieldConfigs?.map((field) => (
-                                <div key={field.name} className="relative">
-                                  <label htmlFor={field.name} className="block text-sm font-medium text-gray-700">
+                                  <div key={field.name} className="relative group">
+                                    <label htmlFor={field.name} className="block text-sm font-medium text-gray-700 mb-1">
                                     {field.label} {field.required && <span className="text-red-500">*</span>}
                                   </label>
                                   <div className="mt-1 relative rounded-md shadow-sm">
                                     {field.type === 'textarea' ? (
+                                        <div className="relative">
                                       <textarea
                                         id={field.name}
                                         name={field.name}
                                         rows={4}
                                         value={formData[field.name] || ''}
                                         onChange={(e) => handleFieldChange(field.name, e.target.value)}
-                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                            className={`block w-full rounded-lg shadow-sm sm:text-sm transition-all duration-200 ${
+                                              !canEdit() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' :
+                                              modifiedFields.has(field.name) 
+                                                ? 'border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 bg-yellow-50' 
+                                                : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500 hover:border-blue-300'
+                                            }`}
                                         placeholder={`Masukkan ${field.label.toLowerCase()}`}
                                         required={field.required}
-                                      />
+                                            disabled={!canEdit()}
+                                          />
+                                          {modifiedFields.has(field.name) && (
+                                            <div className="absolute right-2 top-2">
+                                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                Modified
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
                                     ) : field.type === 'select' ? (
+                                        <div className="relative">
                                       <select
                                         id={field.name}
                                         name={field.name}
                                         value={formData[field.name] || ''}
                                         onChange={(e) => handleFieldChange(field.name, e.target.value)}
-                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                            className={`block w-full rounded-lg shadow-sm sm:text-sm transition-all duration-200 ${
+                                              !canEdit() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' :
+                                              modifiedFields.has(field.name) 
+                                                ? 'border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 bg-yellow-50' 
+                                                : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500 hover:border-blue-300'
+                                            }`}
                                         required={field.required}
+                                            disabled={!canEdit()}
                                       >
                                         <option value="">Pilih {field.label.toLowerCase()}</option>
                                         {field.options?.map(option => (
                                           <option key={option} value={option}>{option}</option>
                                         ))}
                                       </select>
+                                          {modifiedFields.has(field.name) && (
+                                            <div className="absolute right-2 top-2">
+                                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                Modified
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
                                     ) : field.type === 'currency' ? (
                                       <div className="relative">
-                                        <span className="absolute left-3 top-2 text-gray-500">Rp</span>
+                                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <span className="text-gray-500 sm:text-sm">Rp</span>
+                                          </div>
                                         <input
                                           type="text"
                                           id={field.name}
@@ -2141,22 +3022,82 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                                             const numericValue = e.target.value.replace(/[^0-9]/g, '');
                                             handleFieldChange(field.name, numericValue);
                                           }}
-                                          className="block w-full pl-8 rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                            className={`block w-full pl-12 rounded-lg shadow-sm sm:text-sm transition-all duration-200 ${
+                                              !canEdit() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' :
+                                              modifiedFields.has(field.name) 
+                                                ? 'border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 bg-yellow-50' 
+                                                : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500 hover:border-blue-300'
+                                            }`}
                                           placeholder="0"
                                           required={field.required}
-                                        />
+                                            disabled={!canEdit()}
+                                          />
+                                          {modifiedFields.has(field.name) && (
+                                            <div className="absolute right-2 top-2">
+                                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                Modified
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : field.type === 'date' ? (
+                                        <div className="relative">
+                                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                            </svg>
+                                          </div>
+                                          <input
+                                            type="date"
+                                            id={field.name}
+                                            name={field.name}
+                                            value={formData[field.name] || ''}
+                                            min={field.validation?.min || ''}
+                                            max={field.validation?.max || ''}
+                                            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                                            className={`block w-full pl-10 rounded-lg shadow-sm sm:text-sm transition-all duration-200 ${
+                                              !canEdit() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' :
+                                              modifiedFields.has(field.name) 
+                                                ? 'border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 bg-yellow-50' 
+                                                : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500 hover:border-blue-300'
+                                            }`}
+                                            required={field.required}
+                                            disabled={!canEdit()}
+                                          />
+                                          {modifiedFields.has(field.name) && (
+                                            <div className="absolute right-2 top-2">
+                                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                Modified
+                                              </span>
+                                            </div>
+                                          )}
                                       </div>
                                     ) : (
+                                        <div className="relative">
                                       <input
                                         type={field.type || 'text'}
                                         id={field.name}
                                         name={field.name}
                                         value={formData[field.name] || ''}
                                         onChange={(e) => handleFieldChange(field.name, e.target.value)}
-                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                            className={`block w-full rounded-lg shadow-sm sm:text-sm transition-all duration-200 ${
+                                              !canEdit() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' :
+                                              modifiedFields.has(field.name) 
+                                                ? 'border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 bg-yellow-50' 
+                                                : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500 hover:border-blue-300'
+                                            }`}
                                         placeholder={`Masukkan ${field.label.toLowerCase()}`}
                                         required={field.required}
-                                      />
+                                            disabled={!canEdit()}
+                                          />
+                                          {modifiedFields.has(field.name) && (
+                                            <div className="absolute right-2 top-2">
+                                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                Modified
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
                                     )}
                                   </div>
                                   {field.description && (
@@ -2164,11 +3105,13 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                                   )}
                                 </div>
                               ))}
+                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
+
                     <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
                       <div className="flex items-center justify-between">
                         <div className="space-y-1">
@@ -2180,7 +3123,16 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                           {request?.lastSavedBy && (
                             <p className="text-xs text-gray-400">
                               Terakhir disimpan oleh {request.lastSavedBy.name} ({request.lastSavedBy.role}) pada{' '}
-                              {request.lastSavedBy.timestamp?.toDate().toLocaleString()}
+                              {request.lastSavedBy.timestamp?.seconds ? 
+                                new Date(request.lastSavedBy.timestamp.seconds * 1000).toLocaleString('id-ID', {
+                                  day: 'numeric',
+                                  month: 'long',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                }) : 
+                                'waktu tidak tersedia'
+                              }
                             </p>
                           )}
                         </div>
@@ -2194,8 +3146,8 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
                             generating || (
                               (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
                               (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
-                            ) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                          } inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+                            ) ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600'
+                          } inline-flex items-center px-6 py-2.5 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200`}
                           title={
                             (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
                             (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
@@ -2230,110 +3182,217 @@ ${customInstructions.map((instruction, index) => `${index + 1}. ${instruction}`)
 
           {activeTab === 'view' && (
             <div className="space-y-8">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium text-gray-900">Generated BRD Document</h3>
-                <div className="flex items-center space-x-4">
-                  {profile.role === 'Business Analyst' && (
-                    <button
-                      onClick={exportToWord}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                    >
-                      <svg className="h-5 w-5 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      Ekspor ke Word
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {generatedContent ? (
-                <div className="bg-white shadow rounded-lg">
                   {/* Document Header */}
-                  <div className="px-8 py-6 border-b border-gray-200">
+              <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-white">
                     <div className="flex justify-between items-start">
                       <div>
                         <h1 className="text-2xl font-bold text-gray-900">Business Requirements Document</h1>
                         <p className="mt-2 text-sm text-gray-500">Template: {selectedTemplate?.name || request?.templateName}</p>
                       </div>
+                      {profile?.role === 'Business Analyst' ? (
+                        <div className="flex items-center space-x-3">
+                          <button
+                            onClick={exportToWord}
+                            className="inline-flex items-center px-4 py-2.5 border border-blue-600 rounded-lg shadow-sm text-sm font-medium text-blue-600 bg-white hover:bg-blue-50 hover:shadow transition-all duration-200 group"
+                          >
+                            <svg className="h-5 w-5 mr-2 text-blue-500 group-hover:text-blue-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Ekspor ke Word
+                          </button>
+                          <button
+                            onClick={handlePrintBRD}
+                            className="inline-flex items-center px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 hover:shadow transition-all duration-200 group"
+                          >
+                            <svg className="h-5 w-5 mr-2 text-gray-400 group-hover:text-gray-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                            </svg>
+                            Cetak Dokumen
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center space-x-2 text-sm text-gray-500">
+                          <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span>Hanya Business Analyst yang dapat mengekspor dan mencetak dokumen</span>
+                        </div>
+                      )}
                       <img src={bankLogo} alt="Bank Logo" className="h-12" />
                     </div>
                   </div>
 
-                  {/* Document Content */}
+              {/* Document Info */}
+              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50">
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Nomor Dokumen</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">{request?.nomorSurat || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Tanggal Dibuat</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">
+                      {request?.createdAt ? new Date(request.createdAt.seconds * 1000).toLocaleDateString('id-ID', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      }) : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Unit Bisnis</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">{request?.unitBisnis || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Aplikasi</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">{request?.aplikasiDikembangkan || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Generated Content */}
                   <div className="px-8 py-6">
                     <div className="space-y-8">
-                      {(selectedTemplate?.structure?.sections || []).map((section, index) => {
-                        const sectionKey = section.title.toLowerCase().replace(/\s+/g, '_');
-                        const content = generatedContent[sectionKey];
-
-                        return (
-                          <div key={index} className="space-y-4">
-                            <h2 className="text-xl font-semibold text-gray-900">
-                              {toRomanNumeral(index + 1)}. {section.title}
-                            </h2>
-                            {section.description && (
-                              <p className="text-sm text-gray-500 italic">{section.description}</p>
-                            )}
-                            <div className="prose prose-blue max-w-none">
-                              {content ? (
-                                <div className="whitespace-pre-wrap text-gray-700">
-                                  {content.split('\n').map((line, i) => (
-                                    <p key={i} className="mb-2">
-                                      {line.startsWith('Reference:') ? (
-                                        <span className="text-sm text-blue-600 font-medium">{line}</span>
-                                      ) : (
-                                        line
-                                      )}
-                                    </p>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-gray-500 italic">No content generated for this section</p>
-                              )}
+                  {console.log('Request:', request)}
+                  {console.log('Generated Content:', request?.generatedContent)}
+                  {request?.generatedContent?.info_project ? (
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                      <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-white border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className="flex items-center justify-center h-10 w-10 rounded-lg bg-blue-100 text-blue-600">
+                              <span className="text-lg font-semibold">I</span>
+                            </div>
+                            <div>
+                              <h2 className="text-xl font-bold text-gray-900">Informasi Proyek</h2>
+                              <p className="text-sm text-gray-500 mt-1">Generated Business Requirements Document</p>
                             </div>
                           </div>
+                        </div>
+                      </div>
+                      <div className="p-6">
+                        <div className="prose prose-blue max-w-none">
+                          {request.generatedContent.info_project.split('\n').map((line, i) => {
+                            if (!line.trim()) return null;
+
+                            // Section Title (e.g., "1. Introduction")
+                            if (line.match(/^\d+\.\s+[A-Z]/)) {
+                        return (
+                                <div key={i} className="mt-8 first:mt-0">
+                                  <h2 className="text-2xl font-bold text-gray-900 mb-4 pb-2 border-b border-gray-200">
+                                    {line}
+                            </h2>
+                                </div>
+                              );
+                            }
+                            
+                            // Subsection Title (e.g., "1.1. Background")
+                            if (line.match(/^\d+\.\d+\.\s+[A-Z]/)) {
+                              return (
+                                <h3 key={i} className="text-xl font-semibold text-gray-800 mt-6 mb-3">
+                                  {line}
+                                </h3>
+                              );
+                            }
+
+                            // Sub-subsection Title (e.g., "1.1.1. Context")
+                            if (line.match(/^\d+\.\d+\.\d+\.\s+[A-Z]/)) {
+                              return (
+                                <h4 key={i} className="text-lg font-medium text-gray-800 mt-4 mb-2">
+                                  {line}
+                                </h4>
+                              );
+                            }
+
+                            // Reference Block
+                            if (line.toLowerCase().includes('referensi')) {
+                              return (
+                                <div key={i} className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg my-4">
+                                  <p className="text-sm text-blue-700 font-medium">{line}</p>
+                            </div>
+                              );
+                            }
+
+                            // Analysis Block
+                            if (line.toLowerCase().includes('analisis')) {
+                              return (
+                                <div key={i} className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded-r-lg my-4">
+                                  <p className="text-sm text-indigo-700 font-medium">{line}</p>
+                          </div>
+                              );
+                            }
+
+                            // Bullet Points
+                            if (line.startsWith('-')) {
+                              return (
+                                <div key={i} className="flex items-start space-x-2 my-1 ml-4">
+                                  <div className="mt-1.5">
+                                    <div className="h-1.5 w-1.5 rounded-full bg-gray-500"></div>
+                                  </div>
+                                  <p className="text-gray-700 flex-1">{line.substring(1).trim()}</p>
+                                </div>
+                              );
+                            }
+
+                            // Alphabetical Points
+                            if (line.match(/^[a-z]\./i)) {
+                              return (
+                                <div key={i} className="flex items-start space-x-3 my-2 ml-6">
+                                  <span className="text-gray-500 font-medium">{line.split('.')[0]}.</span>
+                                  <p className="text-gray-700 flex-1">{line.substring(2).trim()}</p>
+                                </div>
+                              );
+                            }
+
+                            // Regular Paragraph
+                            return (
+                              <p key={i} className="text-gray-700 my-3 text-justify leading-relaxed">
+                                {line}
+                              </p>
                         );
                       })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 bg-white rounded-lg border-2 border-dashed border-gray-300">
+                      <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <h3 className="mt-2 text-sm font-medium text-gray-900">Belum Ada BRD</h3>
+                      <p className="mt-1 text-sm text-gray-500">Silakan generate BRD terlebih dahulu untuk melihat hasilnya di sini.</p>
+                    </div>
+                  )}
                     </div>
                   </div>
 
                   {/* Document Footer */}
                   <div className="px-8 py-6 bg-gray-50 border-t border-gray-200">
-                    <div className="grid grid-cols-3 gap-8">
+                <div className="grid grid-cols-3 gap-6">
                       <div>
-                        <h4 className="text-sm font-medium text-gray-900">Generated By</h4>
-                        <p className="mt-1 text-sm text-gray-500">{request?.generatedBy?.name || profile.namaLengkap}</p>
-                        <p className="text-xs text-gray-400">{request?.generatedBy?.role || profile.role}</p>
+                    <p className="text-sm font-medium text-gray-500">Dibuat oleh</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">{request?.createdByName}</p>
+                    <p className="text-sm text-gray-500">{request?.createdByRole || profile?.role}</p>
                       </div>
                       <div>
-                        <h4 className="text-sm font-medium text-gray-900">Generated On</h4>
-                        <p className="mt-1 text-sm text-gray-500">
-                          {request?.updatedAt?.toDate().toLocaleDateString('id-ID', {
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric'
-                          })}
+                    <p className="text-sm font-medium text-gray-500">Business Analyst</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">{request?.assignedAnalystName || '-'}</p>
+                    <p className="text-sm text-gray-500">Business Analyst</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Status Dokumen</p>
+                    <p className="mt-1 text-base font-medium text-gray-900">{request?.status}</p>
+                    <p className="text-sm text-gray-500">
+                      Last updated: {request?.updatedAt ? new Date(request.updatedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                        year: 'numeric',
+                          month: 'long',
+                        day: 'numeric'
+                      }) : '-'}
                         </p>
                       </div>
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-900">Document Status</h4>
-                        <span className="mt-1 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          Generated
-                        </span>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">No BRD Generated</h3>
-                  <p className="mt-1 text-sm text-gray-500">Generate a BRD first to view it here.</p>
-                </div>
-              )}
             </div>
           )}
 

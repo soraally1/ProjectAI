@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, getDocs, doc, updateDoc, setDoc, where, serverTimestamp, orderBy, getDoc } from 'firebase/firestore';
+import { collection, query, getDocs, doc, updateDoc, setDoc, where, serverTimestamp, orderBy, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useUser } from '../context/UserContext';
 import TemplateManagement from './TemplateManagement';
@@ -7,6 +7,7 @@ import UserManagement from './UserManagement';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import * as XLSX from 'xlsx';
+import React from 'react';
 
 const AdminPage = () => {
   const { user, profile } = useUser();
@@ -56,6 +57,11 @@ Setiap bagian harus mencakup:
     }
   });
   const [activeSettingsTab, setActiveSettingsTab] = useState('general');
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [showRequestDetail, setShowRequestDetail] = useState(false);
+
+  const [showAssignAnalystModal, setShowAssignAnalystModal] = useState(false);
+  const [selectedAnalyst, setSelectedAnalyst] = useState('');
 
   // Define loadSystemSettings function
   const loadSystemSettings = async () => {
@@ -235,61 +241,110 @@ Setiap bagian harus mencakup:
       const requestRef = doc(db, 'brd_requests', requestId);
       await updateDoc(requestRef, {
         status: newStatus,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+        updatedByName: profile.namaLengkap
       });
+
+      // Add activity log
+      const activityRef = collection(db, 'brd_requests', requestId, 'activities');
+      await addDoc(activityRef, {
+        type: 'status_change',
+        status: newStatus,
+        timestamp: serverTimestamp(),
+        userId: user.uid,
+        userName: profile.namaLengkap,
+        details: `Status permintaan diubah menjadi ${newStatus} oleh admin`
+      });
+
+      // Refresh requests data
       fetchRequests();
+      
+      toast.success(`Status berhasil diubah menjadi ${newStatus}`);
     } catch (error) {
       console.error('Error updating status:', error);
-      alert('Failed to update status. Please try again.');
+      toast.error('Gagal mengubah status permintaan');
     }
   };
 
-  const handleAssignAnalyst = async (requestId, analystId) => {
-    try {
-      if (!analystId) {
+  const handleApproveRequest = async (requestId) => {
+    if (!selectedAnalyst) {
         toast.error('Silakan pilih analis bisnis terlebih dahulu');
         return;
       }
       
-      const analyst = analysts.find(a => a.id === analystId);
-      if (!analyst) {
-        toast.error('Analis bisnis tidak ditemukan');
-        return;
+    try {
+      const selectedAnalystDoc = await getDoc(doc(db, 'users', selectedAnalyst));
+      if (!selectedAnalystDoc.exists()) {
+        throw new Error('Analis tidak ditemukan');
       }
-
-      // Get current workload of the analyst
-      const currentAssignments = requests.filter(r => 
-        r.assignedTo === analystId && 
-        ['Pending Review', 'In Progress'].includes(r.status)
-      ).length;
-
-      if (currentAssignments >= systemSettings.maxProjectsPerUser) {
-        toast.warning(`Analis ini sudah memiliki ${currentAssignments} tugas aktif. Mohon pilih analis lain.`);
-        return;
-      }
+      const analystData = selectedAnalystDoc.data();
 
       const requestRef = doc(db, 'brd_requests', requestId);
       await updateDoc(requestRef, {
-        assignedTo: analystId,
-        assignedAnalystId: analystId,
-        assignedAnalystName: analyst.namaLengkap,
+        status: 'In Progress',
+        approvedAt: serverTimestamp(),
+        approvedBy: user.uid,
+        approvedByName: profile.namaLengkap,
+        assignedAnalystId: selectedAnalyst,
+        assignedAnalystName: analystData.namaLengkap,
+        assignedAnalystPhotoURL: analystData.photoURL || null,
         assignedAt: serverTimestamp(),
-        status: 'Pending Review',
+        currentEditor: 'analyst',
         updatedAt: serverTimestamp(),
-        assignmentHistory: [{
-          assignedBy: user.uid,
-          assignedByName: profile.namaLengkap,
-          assignedAt: new Date(),
-          analystId: analystId,
-          analystName: analyst.namaLengkap
-        }]
+        updatedBy: user.uid,
+        updatedByName: profile.namaLengkap
       });
 
-      toast.success(`Permintaan berhasil ditugaskan kepada ${analyst.namaLengkap}`);
+      // Add activity log
+      const activityRef = collection(db, 'brd_requests', requestId, 'activities');
+      await addDoc(activityRef, {
+        type: 'request_approved',
+        timestamp: serverTimestamp(),
+        userId: user.uid,
+        userName: profile.namaLengkap,
+        details: `Permintaan disetujui dan ditugaskan kepada ${analystData.namaLengkap}`
+      });
+
+      setSelectedAnalyst('');
+      setShowAssignAnalystModal(false);
       fetchRequests();
+      toast.success('Permintaan berhasil disetujui dan ditugaskan');
     } catch (error) {
-      console.error('Error assigning analyst:', error);
-      toast.error('Gagal menugaskan analis. Silakan coba lagi.');
+      console.error('Error approving request:', error);
+      toast.error('Gagal menyetujui permintaan');
+    }
+  };
+
+  const handleRejectRequest = async (requestId, rejectReason) => {
+    try {
+      const requestRef = doc(db, 'brd_requests', requestId);
+      await updateDoc(requestRef, {
+        status: 'Rejected',
+        rejectedAt: serverTimestamp(),
+        rejectedBy: user.uid,
+        rejectedByName: profile.namaLengkap,
+        rejectReason: rejectReason,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+        updatedByName: profile.namaLengkap
+      });
+
+      // Add activity log
+      const activityRef = collection(db, 'brd_requests', requestId, 'activities');
+      await addDoc(activityRef, {
+        type: 'request_rejected',
+        timestamp: serverTimestamp(),
+        userId: user.uid,
+        userName: profile.namaLengkap,
+        details: `Permintaan ditolak oleh admin. Alasan: ${rejectReason}`
+      });
+
+      fetchRequests();
+      toast.success('Permintaan berhasil ditolak');
+    } catch (error) {
+      console.error('Error rejecting request:', error);
+      toast.error('Gagal menolak permintaan');
     }
   };
 
@@ -583,39 +638,344 @@ Setiap bagian harus mencakup:
     }
   };
 
-  const renderRequestsTable = () => {
-    const filteredRequests = selectedStatus === 'all' 
-      ? requests 
-      : requests.filter(r => r.status === selectedStatus);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [selectedRequestId, setSelectedRequestId] = useState(null);
+
+  const RejectModal = ({ isOpen, onClose, onConfirm }) => {
+    if (!isOpen) return null;
 
     return (
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-          <div className="flex items-center space-x-4">
-            <h3 className="text-lg font-semibold text-gray-900">Daftar Permintaan BRD</h3>
+      <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+          <div className="mt-3">
+            <h3 className="text-lg font-medium text-gray-900">Alasan Penolakan</h3>
+            <div className="mt-2">
+              <textarea
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                rows="4"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Masukkan alasan penolakan..."
+              />
+            </div>
+            <div className="mt-4 flex justify-end space-x-3">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  onConfirm(rejectReason);
+                  setRejectReason('');
+                }}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+                disabled={!rejectReason.trim()}
+              >
+                Tolak Permintaan
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const AssignAnalystModal = ({ isOpen, onClose, onConfirm, analysts }) => {
+    if (!isOpen) return null;
+
+    return (
+      <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+          <div className="mt-3">
+            <h3 className="text-lg font-medium text-gray-900">Pilih Analis Bisnis</h3>
+            <div className="mt-2">
             <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            >
-              <option value="all">Semua Status</option>
-              <option value="New">Baru</option>
-              <option value="Pending Review">Menunggu Review</option>
-              <option value="In Progress">Sedang Dikerjakan</option>
-              <option value="Completed">Selesai</option>
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                value={selectedAnalyst}
+                onChange={(e) => setSelectedAnalyst(e.target.value)}
+              >
+                <option key="default" value="">Pilih Analis...</option>
+                {analysts.map((analyst) => (
+                  <option key={analyst.id} value={analyst.id}>
+                    {analyst.namaLengkap}
+                  </option>
+                ))}
             </select>
           </div>
+            <div className="mt-4 flex justify-end space-x-3">
           <button
-            onClick={fetchRequests}
-            className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <svg className="h-4 w-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                onClick={onClose}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => onConfirm()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                disabled={!selectedAnalyst}
+              >
+                Tugaskan & Setujui
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handleResetAssignment = async (requestId) => {
+    try {
+      const requestRef = doc(db, 'brd_requests', requestId);
+      await updateDoc(requestRef, {
+        assignedAnalystId: null,
+        assignedAnalystName: null,
+        assignedAnalystPhotoURL: null,
+        assignedAt: null,
+        status: 'New',
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+        updatedByName: profile.namaLengkap
+      });
+
+      // Add activity log
+      const activityRef = collection(db, 'brd_requests', requestId, 'activities');
+      await addDoc(activityRef, {
+        type: 'assignment_reset',
+        timestamp: serverTimestamp(),
+        userId: user.uid,
+        userName: profile.namaLengkap,
+        details: 'Penugasan analis bisnis telah direset oleh admin'
+      });
+
+      fetchRequests();
+      toast.success('Penugasan berhasil direset');
+    } catch (error) {
+      console.error('Error resetting assignment:', error);
+      toast.error('Gagal mereset penugasan');
+    }
+  };
+
+  // Update the RequestDetailSection component
+  const RequestDetailSection = ({ request }) => {
+    return (
+      <tr>
+        <td colSpan="5" className="px-6 py-4 bg-gray-50">
+          <div className="animate-fadeIn">
+            <div className="bg-white rounded-lg shadow-lg p-6 relative">
+              {/* Header Section */}
+              <div className="border-b border-gray-200 pb-4 mb-6 sticky top-0 bg-white z-20">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Detail Permintaan BRD</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Dibuat pada {request.createdAt?.toLocaleDateString('id-ID', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                  <span className={`px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full ${getStatusColor(request.status)}`}>
+                    {request.status}
+                  </span>
+                </div>
+              </div>
+
+              {/* Content Area with padding for action buttons */}
+              <div className="overflow-y-auto max-h-[calc(100vh-24rem)] pb-20">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Left Column */}
+                  <div className="space-y-6">
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Informasi Dokumen</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Nomor Surat</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.nomorSurat || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Tanggal Pengajuan</label>
+                          <p className="mt-1 text-sm text-gray-900">
+                            {request.createdAt?.toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric'
+                            }) || '-'}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Unit Bisnis</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.unitBisnis || '-'}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Informasi Pengembangan</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Aplikasi yang Dikembangkan</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.aplikasiDikembangkan || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Fitur yang Dikembangkan</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.fiturDikembangkan || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Latar Belakang</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.latarBelakang || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Manfaat yang Diharapkan</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.manfaatDiharapkan || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Tujuan Pengembangan</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.tujuanPengembangan || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Strategi Pelaksanaan</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.strategiPelaksanaan || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Risiko Terkait</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.risikoTerkait || '-'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column */}
+                  <div className="space-y-6">
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Informasi Pemohon</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Nama Pemohon</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.createdByName || '-'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Email Pemohon</label>
+                          <p className="mt-1 text-sm text-gray-900">{request.createdByEmail || '-'}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Status & Penugasan</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Status Saat Ini</label>
+                          <span className={`mt-1 inline-flex px-2 text-xs leading-5 font-semibold rounded-full ${getStatusColor(request.status)}`}>
+                            {request.status}
+                          </span>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Analis Bisnis</label>
+                          <div className="mt-1 flex items-center space-x-2">
+                            <span className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center">
+                              <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                              </svg>
+                            </span>
+                            <span className="text-sm text-gray-900">{request.assignedAnalystName || 'Belum ditugaskan'}</span>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Tanggal Penugasan</label>
+                          <p className="mt-1 text-sm text-gray-900">
+                            {request.assignedAt ? new Date(request.assignedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric'
+                            }) : '-'}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500">Terakhir Diperbarui</label>
+                          <p className="mt-1 text-sm text-gray-900">
+                            {request.updatedAt ? new Date(request.updatedAt).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            }) : '-'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons - Fixed Position */}
+              {request.status === 'New' && (
+                <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4">
+                  <div className="flex justify-start space-x-3 px-2">
+                    <button
+                      onClick={() => {
+                        setSelectedRequestId(request.id);
+                        setShowAssignAnalystModal(true);
+                      }}
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 shadow-sm"
+                    >
+                      <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Setujui & Tugaskan
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedRequestId(request.id);
+                        setShowRejectModal(true);
+                      }}
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 shadow-sm"
+                    >
+                      <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      Tolak
+                    </button>
+                  </div>
+                </div>
+              )}
+              {request.status === 'In Progress' && request.assignedAnalystId && (
+                <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4">
+                  <div className="flex justify-start space-x-3 px-2">
+                    <button
+                      onClick={() => handleResetAssignment(request.id)}
+                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-sm"
+                    >
+                      <svg className="w-4 h-4 mr-1.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            Refresh
+                      Reset Penugasan
           </button>
         </div>
-        <div className="overflow-x-auto">
+                </div>
+              )}
+            </div>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  // Update the renderRequestsTable function
+  const renderRequestsTable = () => {
+    // Filter requests based on selectedStatus
+    const filteredRequests = selectedStatus === 'all' 
+      ? requests 
+      : requests.filter(request => request.status === selectedStatus);
+
+    return (
+      <div className="mt-4 bg-white rounded-lg shadow overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -638,7 +998,8 @@ Setiap bagian harus mencakup:
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredRequests.map((request) => (
-                <tr key={request.id} className="hover:bg-gray-50">
+                <React.Fragment key={request.id}>
+                  <tr className={selectedRequest?.id === request.id ? 'bg-blue-50' : 'hover:bg-gray-50'}>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col">
                       <div className="text-sm font-medium text-gray-900">{request.nomorSurat}</div>
@@ -655,13 +1016,7 @@ Setiap bagian harus mencakup:
                     <div className="text-sm text-gray-900">{request.unitBisnis}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      request.status === 'New' ? 'bg-gray-100 text-gray-800' :
-                      request.status === 'Pending Review' ? 'bg-yellow-100 text-yellow-800' :
-                      request.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                      request.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
+                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(request.status)}`}>
                       {request.status}
                     </span>
                   </td>
@@ -683,23 +1038,41 @@ Setiap bagian harus mencakup:
                       <div className="text-sm text-gray-900">{request.assignedAnalystName || '-'}</div>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    {request.status === 'New' ? (
-                      <span className="text-gray-400">Menunggu Penugasan</span>
-                    ) : (
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <div className="flex justify-end space-x-2">
                       <button
-                        onClick={() => handleStatusChange(request.id, 'New')}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Reset Penugasan
+                          onClick={() => setSelectedRequest(selectedRequest?.id === request.id ? null : request)}
+                          className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-200 ${
+                            selectedRequest?.id === request.id
+                              ? 'text-blue-700 bg-blue-50'
+                              : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
+                          }`}
+                        >
+                          <svg 
+                            className={`w-4 h-4 mr-1.5 transform transition-transform duration-200 ${
+                              selectedRequest?.id === request.id ? 'rotate-180' : ''
+                            }`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                          </svg>
+                          {selectedRequest?.id === request.id ? 'Tutup' : 'Detail'}
                       </button>
+                        {request.status === 'New' && (
+                          <>
+                            
+                          </>
                     )}
+                      </div>
                   </td>
                 </tr>
+                  {selectedRequest?.id === request.id && <RequestDetailSection request={request} />}
+                </React.Fragment>
               ))}
             </tbody>
           </table>
-        </div>
       </div>
     );
   };
@@ -713,7 +1086,7 @@ Setiap bagian harus mencakup:
   }
 
   return (
-    <div className="space-y-6">
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header with Stats */}
       <div className="bg-white rounded-2xl shadow-lg p-6">
         <div className="flex flex-col gap-6">
@@ -882,7 +1255,7 @@ Setiap bagian harus mencakup:
       </div>
 
       {/* Content Section */}
-      <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+      <div className="mt-10 bg-white rounded-2xl shadow-lg overflow-hidden">
         {/* Tab-specific controls */}
         <div className="p-4 bg-gray-50 border-b border-gray-200">
           {activeTab === 'requests' && (
@@ -922,7 +1295,7 @@ Setiap bagian harus mencakup:
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">System Settings</h2>
-                  <p className="mt-1 text-sm text-gray-500">Manage your application's global configuration and preferences.</p>
+                  <p className="mt-1 text-sm text-gray-500">Konfigurasi pada sistem website</p>
                 </div>
                 <div className="flex items-center space-x-3">
                   <button
@@ -964,7 +1337,7 @@ Setiap bagian harus mencakup:
                 <nav className="-mb-px flex space-x-8">
                   {['Access', 'AI Prompts', 'Backup'].map((tab) => (
                     <button
-                      key={tab}
+                      key={tab.toLowerCase()}
                       onClick={() => setActiveSettingsTab(tab.toLowerCase())}
                       className={`
                         whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm
@@ -986,14 +1359,14 @@ Setiap bagian harus mencakup:
               {activeSettingsTab === 'access' && (
                 <div className="bg-white rounded-lg shadow divide-y divide-gray-200">
                   <div className="p-6">
-                    <h3 className="text-lg font-medium text-gray-900">Access Control</h3>
-                    <p className="mt-1 text-sm text-gray-500">Manage user access and security settings.</p>
+                    <h3 className="text-lg font-medium text-gray-900">Kontrol Akses</h3>
+                    <p className="mt-1 text-sm text-gray-500">Kelola pengaturan akses dan keamanan pengguna.</p>
                     <div className="mt-6 space-y-6">
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
                           <div>
-                            <h4 className="text-sm font-medium text-gray-900">Allow Guest Access</h4>
-                            <p className="text-xs text-gray-500 mt-1">Enable access for non-registered users with limited permissions.</p>
+                            <h4 className="text-sm font-medium text-gray-900">Izinkan Akses Tamu</h4>
+                            <p className="text-xs text-gray-500 mt-1">Aktifkan akses untuk pengguna tidak terdaftar dengan izin terbatas.</p>
                           </div>
                           <button
                             onClick={() => setSystemSettings({
@@ -1014,14 +1387,14 @@ Setiap bagian harus mencakup:
 
                         <div className="flex items-center justify-between">
                           <div>
-                            <h4 className="text-sm font-medium text-gray-900">Maintenance Mode</h4>
-                            <p className="text-xs text-gray-500 mt-1">Temporarily disable access to the application for maintenance.</p>
+                            <h4 className="text-sm font-medium text-gray-900">Mode Pemeliharaan</h4>
+                            <p className="text-xs text-gray-500 mt-1">Nonaktifkan sementara akses ke aplikasi untuk pemeliharaan.</p>
                           </div>
                           <button
                             onClick={async () => {
                               try {
                                 if (!systemSettings.maintenanceMode && 
-                                    !window.confirm('Enabling maintenance mode will prevent all non-admin users from accessing the system. Are you sure you want to continue?')) {
+                                    !window.confirm('Mengaktifkan mode pemeliharaan akan mencegah semua pengguna non-admin mengakses sistem. Anda yakin ingin melanjutkan?')) {
                                   return;
                                 }
 
@@ -1040,10 +1413,10 @@ Setiap bagian harus mencakup:
                                   maintenanceMode: newMaintenanceMode
                                 }));
 
-                                toast.success(newMaintenanceMode ? 'Maintenance mode enabled' : 'Maintenance mode disabled');
+                                toast.success(newMaintenanceMode ? 'Mode pemeliharaan diaktifkan' : 'Mode pemeliharaan dinonaktifkan');
                               } catch (error) {
-                                console.error('Error toggling maintenance mode:', error);
-                                toast.error('Failed to toggle maintenance mode');
+                                console.error('Kesalahan saat mengubah mode pemeliharaan:', error);
+                                toast.error('Gagal mengubah mode pemeliharaan');
                               }
                             }}
                             className={`${
@@ -1061,7 +1434,7 @@ Setiap bagian harus mencakup:
                         {systemSettings.maintenanceMode && (
                           <div className="mt-4">
                             <label className="block text-sm font-medium text-gray-700">
-                              Maintenance Message
+                              Pesan Pemeliharaan
                             </label>
                             <div className="mt-1">
                               <textarea
@@ -1081,8 +1454,8 @@ Setiap bagian harus mencakup:
                                       updatedBy: user.uid
                                     });
                                   } catch (error) {
-                                    console.error('Error updating maintenance message:', error);
-                                    toast.error('Failed to update maintenance message');
+                                    console.error('Kesalahan saat memperbarui pesan pemeliharaan:', error);
+                                    toast.error('Gagal memperbarui pesan pemeliharaan');
                                   }
                                 }}
                                 onBlur={async () => {
@@ -1093,18 +1466,18 @@ Setiap bagian harus mencakup:
                                       updatedAt: serverTimestamp(),
                                       updatedBy: user.uid
                                     });
-                                    toast.success('Maintenance message saved');
+                                    toast.success('Pesan pemeliharaan tersimpan');
                                   } catch (error) {
-                                    console.error('Error saving maintenance message:', error);
-                                    toast.error('Failed to save maintenance message');
+                                    console.error('Kesalahan saat menyimpan pesan pemeliharaan:', error);
+                                    toast.error('Gagal menyimpan pesan pemeliharaan');
                                   }
                                 }}
                                 rows={3}
                                 className="block w-full rounded-md border-gray-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                                placeholder="Enter a message to display during maintenance..."
+                                placeholder="Masukkan pesan yang akan ditampilkan selama pemeliharaan..."
                               />
                             </div>
-                            <p className="mt-2 text-xs text-gray-500">This message will be shown to users during maintenance mode.</p>
+                            <p className="mt-2 text-xs text-gray-500">Pesan ini akan ditampilkan kepada pengguna selama mode pemeliharaan.</p>
                           </div>
                         )}
                       </div>
@@ -1119,13 +1492,13 @@ Setiap bagian harus mencakup:
                   <div className="p-6">
                     <div className="flex items-start justify-between">
                       <div>
-                        <h3 className="text-lg font-medium text-gray-900">AI Prompt Configuration</h3>
-                        <p className="mt-1 text-sm text-gray-500">Configure the AI system's behavior and responses for BRD generation.</p>
+                        <h3 className="text-lg font-medium text-gray-900">Konfigurasi Prompt AI</h3>
+                        <p className="mt-1 text-sm text-gray-500">Konfigurasi perilaku dan respons sistem AI untuk pembuatan BRD.</p>
                       </div>
                       <div className="ml-4 flex-shrink-0">
                         <button
                           onClick={() => {
-                            if (window.confirm('Reset AI prompts to default settings?')) {
+                            if (window.confirm('Setel ulang prompt AI ke pengaturan default?')) {
                               const defaultPrompts = {
                                 brdGeneration: `You are an expert Business Analyst at Bank Jateng with over 10 years of experience in creating Business Requirements Documents (BRD).
 Your task is to generate content ONLY for the filled fields and sections in the BRD, following banking industry standards.
@@ -1173,7 +1546,7 @@ Add context and elaboration only around the provided values`
                           }}
                           className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         >
-                          Reset to Default
+                          Setel Ulang ke Default
                         </button>
                       </div>
                     </div>
@@ -1181,9 +1554,9 @@ Add context and elaboration only around the provided values`
                     <div className="mt-6 space-y-6">
                       <div>
                         <label className="block text-sm font-medium text-gray-700">
-                          System Prompt
+                          Prompt Sistem
                           <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                            Main Prompt
+                            Prompt Utama
                           </span>
                         </label>
                         <div className="mt-1">
@@ -1222,9 +1595,9 @@ Add context and elaboration only around the provided values`
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700">
-                          Initial Instruction
+                          Instruksi Awal
                           <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                            Opening Prompt
+                            Prompt Pembuka
                           </span>
                         </label>
                         <div className="mt-1">
@@ -1263,9 +1636,9 @@ Add context and elaboration only around the provided values`
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700">
-                          Generation Instructions
+                          Instruksi Pembuatan
                           <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
-                            Detailed Instructions
+                            Instruksi Detail
                           </span>
                         </label>
                         <div className="mt-1">
@@ -1310,9 +1683,9 @@ Add context and elaboration only around the provided values`
                             </svg>
                           </div>
                           <div className="ml-3">
-                            <h3 className="text-sm font-medium text-yellow-800">Important Note</h3>
+                            <h3 className="text-sm font-medium text-yellow-800">Catatan Penting</h3>
                             <div className="mt-2 text-sm text-yellow-700">
-                              <p>Changes to these prompts will affect how all future BRDs are generated. Make sure to test any changes thoroughly before using them in production.</p>
+                              <p>Perubahan pada prompt ini akan mempengaruhi bagaimana semua BRD akan dibuat di masa mendatang. Pastikan untuk menguji setiap perubahan secara menyeluruh sebelum menggunakannya di produksi.</p>
                             </div>
                           </div>
                         </div>
@@ -1326,8 +1699,8 @@ Add context and elaboration only around the provided values`
               {activeSettingsTab === 'backup' && (
                 <div className="bg-white rounded-lg shadow divide-y divide-gray-200">
                   <div className="p-6">
-                    <h3 className="text-lg font-medium text-gray-900">Backup & Restore</h3>
-                    <p className="mt-1 text-sm text-gray-500">Manage system data backup and restoration.</p>
+                    <h3 className="text-lg font-medium text-gray-900">Cadangan & Pemulihan</h3>
+                    <p className="mt-1 text-sm text-gray-500">Kelola pencadangan dan pemulihan data sistem.</p>
                     
                     <div className="mt-6">
                       <div className="rounded-lg bg-blue-50 p-4">
@@ -1339,7 +1712,7 @@ Add context and elaboration only around the provided values`
                           </div>
                           <div className="ml-3 flex-1 md:flex md:justify-between">
                             <p className="text-sm text-blue-700">
-                              Regular backups help protect your data. Choose your preferred format below.
+                              Pencadangan rutin membantu melindungi data Anda. Pilih format yang Anda inginkan di bawah ini.
                             </p>
                           </div>
                         </div>
@@ -1355,8 +1728,8 @@ Add context and elaboration only around the provided values`
                                   className="focus:outline-none"
                                 >
                                   <span className="absolute inset-0" aria-hidden="true" />
-                                  <p className="text-sm font-medium text-gray-900">JSON Backup</p>
-                                  <p className="text-sm text-gray-500">Complete data backup in JSON format</p>
+                                  <p className="text-sm font-medium text-gray-900">Cadangan JSON</p>
+                                  <p className="text-sm text-gray-500">Cadangan data lengkap dalam format JSON</p>
                                 </button>
                               </div>
                               <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1373,8 +1746,8 @@ Add context and elaboration only around the provided values`
                                   className="focus:outline-none"
                                 >
                                   <span className="absolute inset-0" aria-hidden="true" />
-                                  <p className="text-sm font-medium text-gray-900">Excel Backup</p>
-                                  <p className="text-sm text-gray-500">Data backup in Excel format</p>
+                                  <p className="text-sm font-medium text-gray-900">Cadangan Excel</p>
+                                  <p className="text-sm text-gray-500">Cadangan data dalam format Excel</p>
                                 </button>
                               </div>
                               <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1391,8 +1764,8 @@ Add context and elaboration only around the provided values`
                                   className="focus:outline-none"
                                 >
                                   <span className="absolute inset-0" aria-hidden="true" />
-                                  <p className="text-sm font-medium text-gray-900">SQL Backup</p>
-                                  <p className="text-sm text-gray-500">Data backup in MySQL format</p>
+                                  <p className="text-sm font-medium text-gray-900">Cadangan SQL</p>
+                                  <p className="text-sm text-gray-500">Cadangan data dalam format MySQL</p>
                                 </button>
                               </div>
                               <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1526,6 +1899,33 @@ Add context and elaboration only around the provided values`
           </div>
         </div>
       )}
+
+      {/* Add the RejectModal component */}
+      <RejectModal
+        isOpen={showRejectModal}
+        onClose={() => {
+          setShowRejectModal(false);
+          setRejectReason('');
+          setSelectedRequestId(null);
+        }}
+        onConfirm={(reason) => {
+          handleRejectRequest(selectedRequestId, reason);
+          setShowRejectModal(false);
+          setSelectedRequestId(null);
+        }}
+      />
+
+      {/* Add the AssignAnalystModal */}
+      <AssignAnalystModal
+        isOpen={showAssignAnalystModal}
+        onClose={() => {
+          setShowAssignAnalystModal(false);
+          setSelectedAnalyst('');
+          setSelectedRequestId(null);
+        }}
+        onConfirm={(analystId) => handleApproveRequest(selectedRequestId)}
+        analysts={analysts}
+      />
     </div>
   );
 };

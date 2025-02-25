@@ -59,39 +59,91 @@ const HomePage = () => {
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'New':
-        return 'bg-gray-100 text-gray-800';
-      case 'Pending Review':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'In Progress':
-        return 'bg-blue-100 text-blue-800';
-      case 'Completed':
-        return 'bg-green-100 text-green-800';
-      case 'Rejected':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
   const getStatusMessage = (request) => {
     switch (request.status) {
       case 'New':
-        return 'Waiting for admin to assign an analyst';
+        return request.assignedAnalystId ? 
+          `Menunggu Review Analyst - ${request.assignedAnalystName || '-'}` : 
+          'Menunggu admin untuk menugaskan analis';
       case 'Pending Review':
-        return `Assigned to ${request.assignedAnalystName} - Pending review`;
+        return `Menunggu review dari ${request.assignedAnalystName || '-'}`;
       case 'In Progress':
-        return `In progress by ${request.assignedAnalystName}`;
-      case 'Generated':
-        return 'BRD has been generated';
+        return `Sedang dikerjakan oleh ${request.assignedAnalystName || '-'}`;
+      case 'Already Generated':
+        return `BRD telah dibuat oleh ${request.assignedAnalystName || '-'}`;
       case 'Completed':
-        return `Completed by ${request.assignedAnalystName}`;
+        return `Selesai dikerjakan oleh ${request.assignedAnalystName || '-'}`;
       case 'Rejected':
-        return `Rejected by ${request.assignedAnalystName}`;
+        return `Ditolak${request.rejectReason ? `: ${request.rejectReason}` : ''}`;
       default:
-        return 'Status unknown';
+        return 'Status tidak diketahui';
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'New':
+        return 'bg-blue-50 text-blue-700';
+      case 'Pending Review':
+        return 'bg-amber-50 text-amber-700';
+      case 'In Progress':
+        return 'bg-indigo-50 text-indigo-700';
+      case 'Already Generated':
+        return 'bg-emerald-50 text-emerald-700';
+      case 'Completed':
+        return 'bg-green-50 text-green-700';
+      case 'Rejected':
+        return 'bg-red-50 text-red-700';
+      default:
+        return 'bg-gray-50 text-gray-700';
+    }
+  };
+
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case 'New':
+        return (
+          <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+        );
+      case 'Pending Review':
+        return (
+          <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        );
+      case 'In Progress':
+        return (
+          <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
+      case 'Generated':
+        return (
+          <svg className="w-4 h-4 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        );
+      case 'Completed':
+        return (
+          <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        );
+      case 'Rejected':
+        return (
+          <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        );
+      default:
+        return (
+          <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
     }
   };
 
@@ -409,32 +461,24 @@ const HomePage = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`px-3 py-1 inline-flex items-center text-xs leading-5 font-semibold rounded-full ${
-                        request.status === 'New' ? 'bg-blue-50 text-blue-700' :
-                        request.status === 'Pending Review' ? 'bg-amber-50 text-amber-700' :
-                        request.status === 'In Progress' ? 'bg-indigo-50 text-indigo-700' :
-                        request.status === 'Generated' ? 'bg-purple-50 text-purple-700' :
-                        request.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' :
-                        'bg-red-50 text-red-700'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-2 ${
-                          request.status === 'New' ? 'bg-blue-500' :
-                          request.status === 'Pending Review' ? 'bg-amber-500' :
-                          request.status === 'In Progress' ? 'bg-indigo-500' :
-                          request.status === 'Generated' ? 'bg-purple-500' :
-                          request.status === 'Completed' ? 'bg-emerald-500' :
-                          'bg-red-500'
-                        }`}></span>
-                        {request.status === 'New' ? 'Baru' :
-                         request.status === 'Pending Review' ? 'Menunggu Review' :
-                         request.status === 'In Progress' ? 'Sedang Diproses' :
-                         request.status === 'Generated' ? 'Selesai Dibuat' :
-                         request.status === 'Completed' ? 'Selesai' :
-                         request.status}
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        <span className={`px-3 py-1 inline-flex items-center text-xs leading-5 font-semibold rounded-full ${getStatusColor(request.status)}`}>
+                          <span className="mr-1.5">{getStatusIcon(request.status)}</span>
+                          {request.status === 'New' ? 'Baru' :
+                           request.status === 'Pending Review' ? 'Menunggu Review' :
+                           request.status === 'In Progress' ? 'Sedang Diproses' :
+                           request.status === 'Generated' ? 'Selesai Dibuat' :
+                           request.status === 'Completed' ? 'Selesai' :
+                           request.status === 'Rejected' ? 'Ditolak' :
+                           request.status}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {getStatusMessage(request)}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
-                      {request.assignedTo ? (
+                      {request.assignedAnalystId ? (
                         <div className="flex items-start space-x-3">
                           <div className="flex-shrink-0">
                             <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center">
@@ -444,11 +488,12 @@ const HomePage = () => {
                             </div>
                           </div>
                           <div>
-                            <div className="text-sm font-medium text-gray-900">{request.assignedToName}</div>
+                            <div className="text-sm font-medium text-gray-900">{request.assignedAnalystName}</div>
                             <div className="text-xs text-gray-500 mt-0.5">
-                              {request.status === 'Pending Review' ? 'Menunggu Review' : 
-                              request.status === 'Generated' ? 'Selesai dibuat' : 'Sedang Mengerjakan'}
-                              <p className="text-xs text-gray-500 mt-0.5">{request.assignedAnalystName}</p>
+                              {request.status === 'New' ? 'Menunggu Review' :
+                               request.status === 'In Progress' ? 'Sedang Mengerjakan' :
+                               request.status === 'Already Generated' ? 'Selesai dibuat' :
+                               request.status === 'Completed' ? 'Selesai' : 'Menunggu Review'}
                             </div>
                           </div>
                         </div>
@@ -462,12 +507,12 @@ const HomePage = () => {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      {request.assignedTo && request.status !== 'Pending Review' ? (
+                      {(request.status === 'In Progress' || request.status === 'Already Generated') ? (
                         <Link
                           to={`/dashboard/request/${request.id}`}
                           className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors duration-200"
                         >
-                          {request.status === 'Generated' ? 'Lihat Detail' : 'Buka Ruang Kerja'}
+                          {request.status === 'Already Generated' ? 'Lihat Detail' : 'Buka Ruang Kerja'}
                           <svg className="w-4 h-4 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                           </svg>
@@ -475,10 +520,16 @@ const HomePage = () => {
                       ) : (
                         <div className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg text-gray-400 bg-gray-50 cursor-not-allowed">
                           <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            {request.status === 'Completed' ? (
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            ) : (
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            )}
                           </svg>
-                          {!request.assignedTo ? 'Menunggu Penugasan' : 
-                           request.status === 'Pending Review' ? 'Menunggu Review' : 'Tidak Dapat Diakses'}
+                          {!request.assignedAnalystId ? 'Menunggu Penugasan' : 
+                           request.status === 'New' ? 'Menunggu Review Analyst' :
+                           request.status === 'Pending Review' ? 'Menunggu Review' :
+                           request.status === 'Completed' ? 'BRD Telah Selesai' : 'Tidak Dapat Diakses'}
                         </div>
                       )}
                     </td>

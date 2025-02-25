@@ -10,162 +10,142 @@ const predefinedFields = [
   { 
     name: 'noBRD', 
     label: 'No. BRD', 
+    type: 'text',
     required: true,
-    description: 'Nomor identifikasi unik untuk dokumen BRD'
+    description: 'Nomor identifikasi unik untuk dokumen BRD',
+    placeholder: 'Contoh: BRD-2024-001'
   },
   { 
     name: 'tanggalPermintaan', 
     label: 'Tanggal Permintaan', 
+    type: 'date',
     required: true,
-    description: 'Tanggal saat permintaan BRD diajukan'
+    description: 'Tanggal pengajuan permintaan BRD',
+    validation: {
+      min: new Date().toISOString().split('T')[0]
+    }
   },
   { 
     name: 'unitBisnis', 
     label: 'Unit Bisnis', 
+    type: 'select',
     required: true,
-    description: 'Unit atau divisi bisnis yang mengajukan permintaan'
-  },
-  { 
-    name: 'namaPemohon', 
-    label: 'Nama Pemohon', 
-    required: true,
-    description: 'Nama lengkap pemohon yang mengajukan BRD'
-  },
-  { 
-    name: 'jabatanPemohon', 
-    label: 'Jabatan Pemohon', 
-    required: true,
-    description: 'Posisi atau jabatan pemohon dalam organisasi'
-  },
-  { 
-    name: 'namaProject', 
-    label: 'Nama Project', 
-    required: true,
-    description: 'Nama proyek atau inisiatif yang diusulkan'
-  },
-  { 
-    name: 'jenisPermintaan', 
-    label: 'Jenis Permintaan', 
-    required: true, 
-    options: ['New Development', 'Enhancement', 'Bug Fix'],
-    description: 'Kategori permintaan pengembangan yang diajukan'
+    description: 'Unit atau divisi bisnis yang mengajukan permintaan',
+    options: [
+      'Divisi TSI',
+      'Divisi SDM',
+      'Divisi Perencanaan',
+      'Divisi Keuangan',
+      'Divisi Operasional',
+      'Divisi Marketing',
+      'Divisi Kepatuhan',
+      'Divisi Manajemen Risiko'
+    ]
   },
   { 
     name: 'prioritas', 
     label: 'Prioritas', 
-    required: true, 
-    options: ['High', 'Medium', 'Low'],
-    description: 'Tingkat urgensi dan kepentingan dari permintaan'
-  },
-  { 
-    name: 'targetImplementasi', 
-    label: 'Target Implementasi', 
+    type: 'select',
     required: true,
-    description: 'Tanggal atau periode target penyelesaian implementasi'
+    description: 'Tingkat prioritas dari permintaan',
+    options: ['Tinggi', 'Sedang', 'Rendah']
   },
   { 
     name: 'latarBelakang', 
     label: 'Latar Belakang', 
-    required: true, 
     type: 'textarea',
-    description: 'Penjelasan mengenai alasan dan konteks dari permintaan'
+    required: true,
+    description: 'Latar belakang dan alasan pengajuan BRD',
+    placeholder: 'Jelaskan latar belakang dan alasan mengapa BRD ini diajukan...'
   },
   { 
     name: 'kondisiSaatIni', 
     label: 'Kondisi Saat Ini', 
-    required: true, 
     type: 'textarea',
-    description: 'Deskripsi situasi atau kondisi sistem saat ini'
+    required: true,
+    description: 'Deskripsi kondisi atau proses bisnis saat ini',
+    placeholder: 'Jelaskan kondisi atau proses bisnis yang sedang berjalan saat ini...'
   },
   { 
     name: 'kondisiYangDiharapkan', 
     label: 'Kondisi Yang Diharapkan', 
-    required: true, 
     type: 'textarea',
-    description: 'Deskripsi kondisi atau hasil yang diinginkan setelah implementasi'
+    required: true,
+    description: 'Deskripsi kondisi atau proses bisnis yang diharapkan',
+    placeholder: 'Jelaskan kondisi atau proses bisnis yang diharapkan setelah implementasi...'
   },
   { 
-    name: 'potentialRisk', 
-    label: 'Potential Risk', 
-    required: false, 
+    name: 'ruangLingkup', 
+    label: 'Ruang Lingkup', 
     type: 'textarea',
-    description: 'Identifikasi potensi risiko dan dampak yang mungkin timbul'
+    required: true,
+    description: 'Batasan dan cakupan dari pengembangan yang diajukan',
+    placeholder: 'Jelaskan batasan dan cakupan dari pengembangan yang diajukan...'
   },
   { 
     name: 'estimasiBiaya', 
     label: 'Estimasi Biaya', 
-    required: false, 
     type: 'currency',
-    description: 'Perkiraan biaya yang dibutuhkan untuk implementasi'
+    required: true,
+    description: 'Perkiraan biaya yang dibutuhkan untuk pengembangan',
+    placeholder: 'Masukkan estimasi biaya dalam Rupiah',
+    validation: {
+      min: 0,
+      format: 'IDR'
+    }
   },
   { 
     name: 'estimasiWaktu', 
     label: 'Estimasi Waktu', 
-    required: false,
-    description: 'Perkiraan durasi waktu yang dibutuhkan untuk implementasi'
+    type: 'number',
+    required: true,
+    description: 'Perkiraan waktu yang dibutuhkan dalam hari',
+    placeholder: 'Masukkan estimasi waktu dalam hari',
+    validation: {
+      min: 1,
+      max: 365
+    }
   },
   { 
-    name: 'manfaat', 
-    label: 'Manfaat', 
-    required: true, 
+    name: 'risikoTerkait', 
+    label: 'Risiko Terkait', 
     type: 'textarea',
-    description: 'Penjelasan tentang manfaat dan nilai tambah yang akan diperoleh'
-  },
-  { 
-    name: 'dokumenTambahan', 
-    label: 'Dokumen Tambahan', 
-    required: false, 
-    type: 'file',
-    description: 'Lampiran dokumen pendukung yang relevan'
-  },
-  { 
-    name: 'disetujuiOleh', 
-    label: 'Disetujui Oleh', 
     required: true,
-    description: 'Nama pejabat yang memberikan persetujuan'
+    description: 'Identifikasi risiko yang mungkin timbul',
+    placeholder: 'Jelaskan risiko-risiko yang mungkin timbul dan mitigasinya...'
   },
   { 
-    name: 'disetujuiTanggal', 
-    label: 'Disetujui Tanggal', 
-    required: true, 
-    type: 'date',
-    description: 'Tanggal persetujuan diberikan'
-  },
-  { 
-    name: 'dibuatOleh', 
-    label: 'Dibuat Oleh', 
+    name: 'manfaatDiharapkan', 
+    label: 'Manfaat yang Diharapkan', 
+    type: 'textarea',
     required: true,
-    description: 'Nama pembuat dokumen BRD'
-  },
-  { 
-    name: 'dibuatTanggal', 
-    label: 'Dibuat Tanggal', 
-    required: true, 
-    type: 'date',
-    description: 'Tanggal pembuatan dokumen BRD'
-  },
-  { 
-    name: 'diperiksaOleh', 
-    label: 'Diperiksa Oleh', 
-    required: true,
-    description: 'Nama pemeriksa atau reviewer dokumen BRD'
-  },
-  { 
-    name: 'diperiksaTanggal', 
-    label: 'Diperiksa Tanggal', 
-    required: true, 
-    type: 'date',
-    description: 'Tanggal pemeriksaan dokumen BRD dilakukan'
+    description: 'Manfaat yang diharapkan dari pengembangan',
+    placeholder: 'Jelaskan manfaat-manfaat yang diharapkan...'
   }
 ];
 
 // Define field types at the top level
 const fieldTypes = [
-  { value: 'text', label: 'Text Input' },
+  { value: 'text', label: 'Text' },
   { value: 'textarea', label: 'Text Area' },
+  { value: 'select', label: 'Select' },
+  { value: 'number', label: 'Number' },
   { value: 'currency', label: 'Currency' },
-  { value: 'select', label: 'Select/Dropdown' }
+  { value: 'date', label: 'Date' },
+  { value: 'email', label: 'Email' },
+  { value: 'tel', label: 'Phone' }
 ];
+
+// Add date validation helper
+const getDefaultDateValidation = (fieldType) => {
+  if (fieldType === 'date') {
+    const today = new Date().toISOString().split('T')[0];
+    return {
+      min: today, // Default minimum date is today
+    };
+  }
+  return null;
+};
 
 // Add fieldBelongsToCategory helper function
 const fieldBelongsToCategory = (field, category) => {
@@ -203,7 +183,7 @@ const SearchBar = ({ value, onChange }) => (
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      placeholder="Search templates..."
+      placeholder="Cari template..."
       className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-blue-500"
     />
     <svg
@@ -276,7 +256,7 @@ const FieldSelectionModal = ({ isOpen, onClose, onSelect, predefinedFields, cust
 
         <div className="inline-block w-full max-w-4xl p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-medium text-gray-900">Pilih Field untuk Bagian Template</h3>
+            <h3 className="text-lg font-medium text-gray-900">Pilih Field untuk Bab Template</h3>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
               <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -423,7 +403,7 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
 
   const handleSubmit = () => {
     if (!sectionData.title.trim()) {
-      toast.error('Judul bagian harus diisi');
+      toast.error('Judul Bab harus diisi');
       return;
     }
 
@@ -447,7 +427,7 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
 
         <div className="inline-block w-full max-w-3xl p-6 my-8 overflow-hidden text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-medium text-gray-900">Tambah Bagian Baru</h3>
+            <h3 className="text-lg font-medium text-gray-900">{editingSectionIndex >= 0 ? 'Ubah Bab' : 'Tambah Bab Baru'}</h3>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
               <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -457,13 +437,13 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
 
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Judul Bagian</label>
+              <label className="block text-sm font-medium text-gray-700">Judul Bab</label>
               <input
                 type="text"
                 value={sectionData.title}
                 onChange={(e) => setSectionData(prev => ({ ...prev, title: e.target.value }))}
                 className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                placeholder="Masukkan judul bagian"
+                placeholder="Masukkan judul Bab"
               />
             </div>
 
@@ -474,13 +454,13 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
                 onChange={(e) => setSectionData(prev => ({ ...prev, description: e.target.value }))}
                 rows={3}
                 className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                placeholder="Masukkan deskripsi bagian"
+                placeholder="Masukkan deskripsi Bab"
               />
             </div>
 
             <div>
               <div className="flex justify-between items-center mb-4">
-                <label className="block text-sm font-medium text-gray-700">Field yang Dipilih</label>
+                <label className="block text-sm font-medium text-gray-700">Sub Bab yang Dipilih</label>
                 <button
                   onClick={() => setIsFieldSelectionOpen(true)}
                   className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700"
@@ -488,7 +468,7 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
                   <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
-                  Tambah Field
+                  Tambah Sub Bab
                 </button>
               </div>
 
@@ -498,8 +478,8 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
                     <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <p className="mt-2 text-sm text-gray-500">Belum ada field yang dipilih</p>
-                    <p className="text-xs text-gray-400">Klik "Tambah Field" untuk memilih field</p>
+                    <p className="mt-2 text-sm text-gray-500">Belum ada sub bab yang dipilih</p>
+                    <p className="text-xs text-gray-400">Klik "Tambah Sub Bab" untuk memilih sub bab</p>
                   </div>
                 ) : (
                   sectionData.points.map((point, index) => (
@@ -531,7 +511,7 @@ const AddSectionModal = ({ isOpen, onClose, onAdd, predefinedFields, customField
                 disabled={!sectionData.title || sectionData.points.length === 0}
                 className="px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {editingSectionIndex >= 0 ? 'Perbarui Bagian' : 'Tambah Bagian'}
+                {editingSectionIndex >= 0 ? 'Simpan Bab' : 'Simpan Bab Baru'}
               </button>
             </div>
           </div>
@@ -668,169 +648,55 @@ const TemplateManagement = () => {
   // Function to handle both custom and regular field addition
   const handleAddField = async (isCustom = false) => {
     try {
-      // Log the current state
-      console.log('Adding field, current state:', {
-        isCustom,
-        userId: user?.uid,
-        isAdmin: profile?.isAdmin,
-        role: profile?.role,
-        fieldData: newField
-      });
-
-      // Validate user permissions first
       if (!profile?.isAdmin) {
-        console.error('Permission denied: User is not admin', {
-          userId: user?.uid,
-          profile: profile
-        });
         toast.error('Anda tidak memiliki izin untuk menambah field');
         return;
       }
 
-      // Basic validation
       if (!newField.name || !newField.label) {
         toast.error('Nama dan label field harus diisi');
         return;
       }
 
-      // Validate field name format
-      const nameRegex = /^[a-zA-Z][a-zA-Z0-9_]*$/;
-      if (!nameRegex.test(newField.name)) {
-        toast.error('Nama field harus diawali huruf dan hanya boleh mengandung huruf, angka, dan underscore');
-        return;
-      }
-
-      // Type-specific validation
-      let isValid = true;
-      let errorMessage = '';
-
-      switch (newField.type) {
-        case 'select':
-          if (!newField.options || newField.options.length === 0) {
-            isValid = false;
-            errorMessage = 'Field tipe pilihan harus memiliki minimal satu opsi';
-          }
-          break;
-        case 'date':
-          // Add any specific validation for date fields if needed
-          break;
-        case 'currency':
-          // Add any specific validation for currency fields if needed
-          break;
-        case 'file':
-          // Add any specific validation for file fields if needed
-          break;
-        case 'textarea':
-          // Add any specific validation for textarea fields if needed
-          break;
-        case 'text':
-          // Add any specific validation for text fields if needed
-          break;
-        default:
-          // Default text field doesn't need special validation
-          break;
-      }
-
-      if (!isValid) {
-        toast.error(errorMessage);
-        return;
-      }
-
-      const fieldConfig = {
-        name: newField.name.trim(),
-        label: newField.label.trim(),
-        description: newField.description.trim() || undefined, // Only include if not empty
-        isCustom,
-        type: newField.type || 'text',
-        required: newField.required ?? true
+      // Add field configuration
+      let fieldConfig = {
+        ...newField,
+        required: newField.required ?? true,
+        description: newField.description || `Field untuk ${newField.label}`
       };
 
-      // Only add options if they exist and the type is select
-      if (newField.type === 'select' && newField.options && newField.options.length > 0) {
-        fieldConfig.options = newField.options;
-      }
-
-      // Check if field name already exists (case-insensitive)
-      const existingFields = [...predefinedFields, ...customFields];
-      const fieldExists = existingFields.some(
-        f => f.name.toLowerCase() === fieldConfig.name.toLowerCase()
-      );
-
-      if (fieldExists) {
-        toast.error('Nama field sudah digunakan, silakan gunakan nama lain');
-        return;
+      // Add type-specific validation
+      switch (newField.type) {
+        case 'select':
+          fieldConfig.options = fieldConfig.options || ['Pilihan 1', 'Pilihan 2', 'Pilihan 3'];
+          break;
+        case 'number':
+          fieldConfig.validation = fieldConfig.validation || {
+            min: 0,
+            max: 1000000
+          };
+          break;
+        case 'currency':
+          fieldConfig.validation = fieldConfig.validation || {
+            min: 0,
+            format: 'IDR'
+          };
+          break;
       }
 
       if (isCustom) {
-        // Save to Firestore with explicit error handling
-        try {
-          console.log('Attempting to save custom field to Firestore:', fieldConfig);
-          const customFieldsRef = collection(db, 'custom_fields');
-          
-          // Create Firestore document data without undefined values
-          const firestoreData = {
-            ...fieldConfig,
-            createdAt: new Date(),
-            createdBy: user.uid,
-            createdByName: profile.namaLengkap
-          };
+        // Save to custom_fields collection
+        const customFieldsRef = collection(db, 'custom_fields');
+        await addDoc(customFieldsRef, {
+          ...fieldConfig,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+          createdByName: profile.namaLengkap,
+          isCustom: true
+        });
 
-          // Remove any undefined values
-          Object.keys(firestoreData).forEach(key => {
-            if (firestoreData[key] === undefined) {
-              delete firestoreData[key];
-            }
-          });
-
-          const docRef = await addDoc(customFieldsRef, firestoreData);
-
-          console.log('Successfully added custom field:', docRef.id);
-
-          // Add to local state
-          const newCustomField = {
-            id: docRef.id,
-            ...fieldConfig
-          };
-          
-          setCustomFields(prev => [...prev, newCustomField]);
-          
-          // Add to selected fields if in editing mode
-          if (isEditing) {
-            setSelectedTemplate(prev => ({
-              ...prev,
-              fields: [...(prev?.fields || []), newCustomField]
-            }));
-          } else {
-            setNewTemplate(prev => ({
-              ...prev,
-              fields: [...(prev?.fields || []), newCustomField]
-            }));
-          }
-        } catch (firestoreError) {
-          console.error('Firestore error details:', {
-            code: firestoreError.code,
-            message: firestoreError.message,
-            userId: user?.uid,
-            isAdmin: profile?.isAdmin,
-            role: profile?.role,
-            fieldConfig
-          });
-          toast.error('Gagal menyimpan field ke database: ' + firestoreError.message);
-          return;
-        }
-      } else {
-        // Add to template fields
-        if (isEditing) {
-          setSelectedTemplate(prev => ({
-            ...prev,
-            fields: [...(prev?.fields || []), fieldConfig]
-          }));
-        } else {
-          setNewTemplate(prev => ({
-            ...prev,
-            fields: [...(prev?.fields || []), fieldConfig]
-          }));
-        }
+        // Add to customFields state
+        setCustomFields(prev => [...prev, { ...fieldConfig, isCustom: true }]);
       }
 
       // Reset form
@@ -840,23 +706,15 @@ const TemplateManagement = () => {
         required: true,
         type: 'text',
         options: [],
-        description: '' // Reset description field
+        description: ''
       });
       setNewOption('');
       setIsAddingField(false);
-      setError(null);
-
-      // Show success message
+      
       toast.success('Field berhasil ditambahkan');
     } catch (error) {
-      console.error('Error in handleAddField:', error);
-      console.error('Error context:', {
-        userId: user?.uid,
-        isAdmin: profile?.isAdmin,
-        role: profile?.role,
-        fieldData: newField
-      });
-      toast.error('Gagal menambahkan field: ' + error.message);
+      console.error('Error adding field:', error);
+      toast.error('Gagal menambahkan field');
     }
   };
 
@@ -899,7 +757,7 @@ const TemplateManagement = () => {
 
   useEffect(() => {
     if (!profile?.isAdmin) {
-      setError('You do not have permission to manage templates. Please contact an administrator.');
+      setError('Anda tidak memiliki izin untuk mengelola template. Silakan hubungi administrator.');
       setLoading(false);
       return;
     }
@@ -942,7 +800,7 @@ const TemplateManagement = () => {
       }
 
       if (newTemplate.structure.sections.length === 0) {
-        setError('Template harus memiliki minimal satu bagian');
+        setError('Template harus memiliki minimal satu sub bab');
         return;
       }
 
@@ -984,7 +842,7 @@ const TemplateManagement = () => {
       }
 
       if (!selectedTemplate?.id) {
-        toast.error('Template ID tidak valid');
+        toast.error('ID Template tidak valid');
         return;
       }
 
@@ -997,16 +855,16 @@ const TemplateManagement = () => {
         validationErrors.push('Deskripsi template harus diisi');
       }
       if (!selectedTemplate.structure?.sections?.length) {
-        validationErrors.push('Template harus memiliki minimal satu bagian');
+        validationErrors.push('Template harus memiliki minimal satu sub bab');
       }
 
       // Section validation
       selectedTemplate.structure?.sections?.forEach((section, index) => {
         if (!section.title?.trim()) {
-          validationErrors.push(`Bagian ${index + 1} harus memiliki judul`);
+          validationErrors.push(`Sub Bab ${index + 1} harus memiliki judul`);
         }
         if (!section.points?.length) {
-          validationErrors.push(`Bagian ${index + 1} harus memiliki minimal satu poin`);
+          validationErrors.push(`Sub Bab ${index + 1} harus memiliki minimal satu poin`);
         }
       });
 
@@ -1032,24 +890,19 @@ const TemplateManagement = () => {
         name: selectedTemplate.name.trim(),
         description: selectedTemplate.description.trim(),
         structure: {
-          sections: selectedTemplate.structure?.sections?.map(section => ({
+          sections: selectedTemplate.structure.sections.map(section => ({
             title: section.title || '',
             description: section.description || '',
             points: Array.isArray(section.points) ? section.points : [],
             fields: Array.isArray(section.fields) ? section.fields : [],
             fieldConfigs: Array.isArray(section.fieldConfigs) ? section.fieldConfigs : []
-          })) || []
+          }))
         },
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
         updatedByName: profile.namaLengkap,
         status: selectedTemplate.status || 'active',
-        version: (selectedTemplate.version || 0) + 1,
-        previousVersion: selectedTemplate.id,
-        versionHistory: versionHistory.map(version => ({
-          timestamp: new Date(),
-          data: version
-        }))
+        version: (selectedTemplate.version || 0) + 1
       };
 
       // Remove any undefined or null values recursively
@@ -1060,7 +913,7 @@ const TemplateManagement = () => {
               return cleanData(item);
             }
             return item;
-          });
+          }).filter(item => item !== null && item !== undefined);
         }
         
         const cleaned = {};
@@ -1078,7 +931,7 @@ const TemplateManagement = () => {
       };
 
       const cleanedData = cleanData(updateData);
-      console.log('Updating template with data:', cleanedData);
+      console.log('Memperbarui template dengan data:', cleanedData);
 
       await updateDoc(templateRef, cleanedData);
       
@@ -1090,8 +943,8 @@ const TemplateManagement = () => {
       setCurrentVersionIndex(-1);
       setIsDirty(false);
     } catch (error) {
-      console.error('Error updating template:', error);
-      console.error('Template data:', selectedTemplate);
+      console.error('Kesalahan saat memperbarui template:', error);
+      console.error('Data template:', selectedTemplate);
       toast.error('Gagal memperbarui template: ' + error.message);
     }
   };
@@ -1442,25 +1295,43 @@ const TemplateManagement = () => {
           
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
-              {field.type === 'text' && (
-                <input type="text" className="w-full p-2 border rounded-md" placeholder="Sample text input" />
-              )}
-              {field.type === 'textarea' && (
-                <textarea rows={4} className="w-full p-2 border rounded-md" placeholder="Sample text area"></textarea>
-              )}
-              {field.type === 'select' && field.options && (
-                <select className="w-full p-2 border rounded-md">
-                  <option value="">Select an option</option>
-                  {field.options.map((opt, i) => (
-                    <option key={i} value={opt}>{opt}</option>
-                  ))}
-                </select>
-              )}
-              {field.type === 'currency' && (
-                <div className="relative">
-                  <span className="absolute left-3 top-2 text-gray-500">Rp</span>
-                  <input type="text" className="w-full p-2 pl-8 border rounded-md" placeholder="1,000,000" />
+              <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+              {field.type === 'date' ? (
+                <div className="relative mt-1">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <input
+                    type="date"
+                    className="block w-full pl-10 rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    min={field.validation?.min}
+                    max={field.validation?.max}
+                  />
+                </div>
+              ) : (
+                <div>
+                  {field.type === 'text' && (
+                    <input type="text" className="w-full p-2 border rounded-md" placeholder="Sample text input" />
+                  )}
+                  {field.type === 'textarea' && (
+                    <textarea rows={4} className="w-full p-2 border rounded-md" placeholder="Sample text area"></textarea>
+                  )}
+                  {field.type === 'select' && field.options && (
+                    <select className="w-full p-2 border rounded-md">
+                      <option value="">Select an option</option>
+                      {field.options.map((opt, i) => (
+                        <option key={i} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  )}
+                  {field.type === 'currency' && (
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-gray-500">Rp</span>
+                      <input type="text" className="w-full p-2 pl-8 border rounded-md" placeholder="1,000,000" />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1529,8 +1400,8 @@ const TemplateManagement = () => {
     setNewField(prev => ({
       ...prev,
       type,
-      // Reset options only if changing from select to another type
-      options: type === 'select' ? (prev.type === 'select' ? prev.options : []) : undefined
+      validation: getDefaultDateValidation(type),
+      options: type === 'select' ? [] : undefined
     }));
   };
 
@@ -1695,10 +1566,10 @@ const TemplateManagement = () => {
       
       setIsModalOpen(false);
       setEditingSectionIndex(-1);
-      toast.success('Bagian berhasil diperbarui');
+      toast.success('Sub Bab berhasil diperbarui');
     } catch (error) {
       console.error('Error updating section:', error);
-      toast.error('Gagal memperbarui bagian: ' + error.message);
+      toast.error('Gagal memperbarui sub bab: ' + error.message);
     }
   };
 
@@ -1761,7 +1632,7 @@ const TemplateManagement = () => {
                 </svg>
               </div>
               <div>
-                <p className="text-blue-100 text-sm">Custom Fields</p>
+                <p className="text-blue-100 text-sm">Field Kustom</p>
                 <p className="text-white text-2xl font-bold">{customFields.length}</p>
               </div>
             </div>
@@ -1772,7 +1643,7 @@ const TemplateManagement = () => {
                 </svg>
               </div>
               <div>
-                <p className="text-blue-100 text-sm">Total Sections</p>
+                <p className="text-blue-100 text-sm">Total Bab</p>
                 <p className="text-white text-2xl font-bold">
                   {templates.reduce((acc, template) => acc + (template.structure?.sections?.length || 0), 0)}
                 </p>
@@ -1791,7 +1662,7 @@ const TemplateManagement = () => {
               </svg>
             </div>
             <div className="ml-3">
-              <h3 className="text-sm font-medium text-red-800">Error</h3>
+              <h3 className="text-sm font-medium text-red-800">Kesalahan</h3>
               <p className="mt-1 text-sm text-red-700">{error}</p>
             </div>
           </div>
@@ -1807,9 +1678,9 @@ const TemplateManagement = () => {
               </svg>
             </div>
             <div className="ml-3">
-              <h3 className="text-lg font-medium text-yellow-800">Access Restricted</h3>
+              <h3 className="text-lg font-medium text-yellow-800">Akses Terbatas</h3>
               <p className="mt-2 text-yellow-700">
-                You need administrator privileges to manage templates. Please contact your system administrator for access.
+                Anda memerlukan hak akses administrator untuk mengelola template. Silakan hubungi administrator sistem untuk mendapatkan akses.
               </p>
             </div>
           </div>
@@ -1824,7 +1695,7 @@ const TemplateManagement = () => {
                   <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
-                  Templates Tersedia
+                  Template Tersedia
                 </h3>
                 <div className="flex items-center space-x-2">
                   <SearchBar value={searchQuery} onChange={setSearchQuery} />
@@ -1835,7 +1706,7 @@ const TemplateManagement = () => {
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-900"></div>
-                <p className="mt-4 text-sm text-gray-500">Loading templates...</p>
+                <p className="mt-4 text-sm text-gray-500">Memuat template...</p>
               </div>
             ) : filteredTemplates.length === 0 ? (
               <div className="text-center py-12 px-4">
@@ -1844,8 +1715,8 @@ const TemplateManagement = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No templates found</h3>
-                <p className="text-gray-500 mb-6">Get started by creating your first template</p>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Tidak ada template ditemukan</h3>
+                <p className="text-gray-500 mb-6">Mulai dengan membuat template pertama Anda</p>
                 <button
                   onClick={() => setActiveTab('structure')}
                   className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700"
@@ -1853,7 +1724,7 @@ const TemplateManagement = () => {
                   <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
-                  Create Template
+                  Buat Template
                 </button>
               </div>
             ) : (
@@ -1872,7 +1743,7 @@ const TemplateManagement = () => {
                             {template.name}
                             {selectedTemplate?.id === template.id && (
                               <span className="ml-2 px-2 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded-full">
-                                Selected
+                                Terpilih
                               </span>
                             )}
                           </h4>
@@ -1883,13 +1754,13 @@ const TemplateManagement = () => {
                               <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                               </svg>
-                              {template.structure?.sections?.length || 0} sections
+                              {template.structure?.sections?.length || 0} Bab
                             </div>
                             <div className="flex items-center">
                               <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2zM6 20h2a2 2 0 002-2v-2a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2z" />
                               </svg>
-                              {template.structure?.sections?.reduce((total, section) => total + (section.fields?.length || 0), 0) || 0} fields
+                              {template.structure?.sections?.reduce((total, section) => total + (section.fields?.length || 0), 0) || 0} Sub Bab
                             </div>
                             <div className="flex items-center">
                               <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1912,12 +1783,12 @@ const TemplateManagement = () => {
                           </button>
                           <button
                             onClick={() => {
-                              if (window.confirm('Are you sure you want to delete this template?')) {
+                              if (window.confirm('Apakah Anda yakin ingin menghapus template ini?')) {
                                 handleDeleteTemplate(template.id);
                               }
                             }}
                             className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200"
-                            title="Delete template"
+                            title="Hapus template"
                           >
                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -1941,10 +1812,10 @@ const TemplateManagement = () => {
                   <svg className="w-6 h-6 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  {isEditing ? 'Edit Template' : 'Create New Template'}
+                  {isEditing ? 'Edit Template' : 'Buat Template Baru'}
                   {isEditing && (
                     <span className="ml-3 px-3 py-1 text-sm font-medium text-blue-600 bg-blue-50 rounded-full">
-                      Editing Mode
+                      Mode Edit
                     </span>
                   )}
                 </h3>
@@ -2011,7 +1882,7 @@ const TemplateManagement = () => {
                   <>
                     <div className="grid grid-cols-1 gap-6">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Template Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Nama Template</label>
                         <input
                           type="text"
                           value={isEditing ? selectedTemplate?.name : newTemplate.name}
@@ -2029,12 +1900,12 @@ const TemplateManagement = () => {
                             }
                           }}
                           className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-                          placeholder="Enter template name"
+                          placeholder="Masukkan nama template"
                         />
                       </div>
                       
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
                         <textarea
                           value={isEditing ? selectedTemplate?.description : newTemplate.description}
                           onChange={(e) => {
@@ -2052,7 +1923,7 @@ const TemplateManagement = () => {
                           }}
                           rows={3}
                           className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-                          placeholder="Enter template description"
+                          placeholder="Masukkan deskripsi template"
                         />
                       </div>
                     </div>
@@ -2071,7 +1942,7 @@ const TemplateManagement = () => {
                             </svg>
                             Struktur Template
                           </h4>
-                          <p className="mt-1 text-sm text-gray-500">Organize your template into logical sections</p>
+                          <p className="mt-1 text-sm text-gray-500"> Buat struktur template Anda dengan menambahkan bab dan sub bab</p>
                         </div>
                         <button
                           onClick={handleOpenModal}
@@ -2080,7 +1951,7 @@ const TemplateManagement = () => {
                           <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                           </svg>
-                          Add New Section
+                          Tambah Bab
                         </button>
                       </div>
 
@@ -2092,16 +1963,16 @@ const TemplateManagement = () => {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                           </div>
-                          <h3 className="text-lg font-medium text-gray-900 mb-2">No Sections Added Yet</h3>
-                          <p className="text-gray-500 mb-6 max-w-sm mx-auto">Start building your template by adding sections to organize your fields</p>
+                          <h3 className="text-lg font-medium text-gray-900 mb-2">Tidak ada Bab baru</h3>
+                          <p className="text-gray-500 mb-6 max-w-sm mx-auto">Mulai membuat template Anda dengan menambahkan bab dan sub bab</p>
                           <button
                             onClick={handleOpenModal}
                             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition-all duration-200"
                           >
                             <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                            </svg>
-                            Add Your First Section
+                            </svg> 
+                            Tambah Bab
                           </button>
                         </div>
                       ) : (
@@ -2345,19 +2216,30 @@ const TemplateManagement = () => {
                               />
                               <p className="mt-1 text-xs text-gray-500">Deskripsi akan ditampilkan sebagai petunjuk saat mengisi sub bab</p>
                             </div>
+                            
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700">Nilai Awal Bab</label>
+                              <textarea
+                                value={newField.defaultValue || ''}
+                                onChange={(e) => setNewField({ ...newField, defaultValue: e.target.value })}
+                                rows={3}
+                                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                placeholder="Masukkan nilai awal untuk sub bab ini"
+                              />
+                              <p className="mt-1 text-xs text-gray-500">Nilai ini akan menjadi nilai default ketika sub bab dibuat</p>
+                            </div>
+  
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div>
                                 <label className="block text-sm font-medium text-gray-700">Tipe Sub Bab</label>
                                 <select
-                                  value={newField.type}
+                                  value={newField.type || 'text'}
                                   onChange={(e) => handleFieldTypeChange(e.target.value)}
                                   className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                                 >
-                                  {fieldTypes.map((type) => (
-                                    <option key={type.value} value={type.value}>
-                                      {type.label}
-                                    </option>
+                                  {fieldTypes.map(type => (
+                                    <option key={type.value} value={type.value}>{type.label}</option>
                                   ))}
                                 </select>
                               </div>
@@ -2422,6 +2304,43 @@ const TemplateManagement = () => {
                               </div>
                             )}
 
+                            {newField.type === 'date' && (
+                              <div className="space-y-4">
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700">Tanggal Minimum</label>
+                                  <input
+                                    type="date"
+                                    value={newField.validation?.min || ''}
+                                    onChange={(e) => setNewField(prev => ({
+                                      ...prev,
+                                      validation: {
+                                        ...prev.validation,
+                                        min: e.target.value
+                                      }
+                                    }))}
+                                    className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                  />
+                                  <p className="mt-1 text-xs text-gray-500">Biarkan kosong jika tidak ada batas minimum</p>
+                                </div>
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700">Tanggal Maksimum</label>
+                                  <input
+                                    type="date"
+                                    value={newField.validation?.max || ''}
+                                    onChange={(e) => setNewField(prev => ({
+                                      ...prev,
+                                      validation: {
+                                        ...prev.validation,
+                                        max: e.target.value
+                                      }
+                                    }))}
+                                    className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                  />
+                                  <p className="mt-1 text-xs text-gray-500">Biarkan kosong jika tidak ada batas maksimum</p>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="flex justify-end space-x-3">
                               <button
                                 onClick={() => {
@@ -2451,7 +2370,7 @@ const TemplateManagement = () => {
                                 disabled={!newField.name || !newField.label || (newField.type === 'select' && (!newField.options || newField.options.length === 0))}
                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 relative"
                               >
-                                <span className="relative z-10">Tambah Field</span>
+                                <span className="relative z-10">Tambah Sub Bab</span>
                               </button>
                             </div>
                           </div>
@@ -2459,7 +2378,7 @@ const TemplateManagement = () => {
                       </div>
 
                       {/* Field Cards */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[calc(100vh-400px)] overflow-y-auto pr-2">
+                      <div className="grid grid-cols-1 md:grid-cols-1 gap-4 max-h-[calc(100vh-400px)] overflow-y-auto pr-2">
                         {allFields
                           .filter(field => {
                             const matchesSearch = 

@@ -118,7 +118,7 @@ const Profile = () => {
               onClick={() => setIsEditing(!isEditing)}
               className="mt-4 md:mt-0 px-6 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-white text-sm font-medium transition-all duration-200"
             >
-              {isEditing ? 'Batal' : 'Edit Profil'}
+              {isEditing ? 'Batal' : 'Ubah Profil'}
             </button>
           </div>
         </div>

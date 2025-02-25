@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { Link, useNavigate } from 'react-router-dom';
@@ -8,11 +8,27 @@ import { setCookie } from '../utils/cookieManager';
 import iBRDLogo from '../assets/i-BRDSystem.svg';
 import batikBg from '../assets/batik.svg';
 
+// Security constants
+const SECURITY_CONFIG = {
+  MAX_LOGIN_ATTEMPTS: 3,
+  COOLDOWN_DURATION: 10000, // 10 seconds
+  MIN_ATTEMPT_INTERVAL: 2000, // 2 seconds between attempts
+  PASSWORD_MIN_LENGTH: 6,
+  SESSION_STORAGE_KEYS: {
+    LOGIN_ATTEMPTS: 'loginAttempts',
+    COOLDOWN_END_TIME: 'cooldownEndTime',
+    SECURITY_EVENTS: 'securityEvents'
+  }
+};
+
+// Form validation constants
+const VALIDATION = {
+  EMAIL_REGEX: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+  SANITIZE_REGEX: /[<>{}]/g
+};
+
 const Login = () => {
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
+  const [formData, setFormData] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -20,34 +36,41 @@ const Login = () => {
   const [cooldownEndTime, setCooldownEndTime] = useState(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [lastAttemptTime, setLastAttemptTime] = useState(Date.now());
+  const [rememberMe, setRememberMe] = useState(false);
   const navigate = useNavigate();
 
-  // Security constants
-  const MAX_LOGIN_ATTEMPTS = 3;
-  const COOLDOWN_DURATION = 10000; // 10 seconds
-  const MIN_ATTEMPT_INTERVAL = 2000; // 2 seconds between attempts
+  // Memoized form state
+  const isFormDisabled = useMemo(() => 
+    loading || (cooldownEndTime && Date.now() < cooldownEndTime),
+    [loading, cooldownEndTime]
+  );
 
+  // Load previous security state
   useEffect(() => {
-    // Load previous attempts from session storage
-    const storedAttempts = sessionStorage.getItem('loginAttempts');
-    const storedCooldown = sessionStorage.getItem('cooldownEndTime');
-    
-    if (storedAttempts) {
-      setLoginAttempts(parseInt(storedAttempts));
-    }
-    if (storedCooldown) {
-      const endTime = parseInt(storedCooldown);
-      if (Date.now() < endTime) {
-        setCooldownEndTime(endTime);
-        setTimeLeft(Math.ceil((endTime - Date.now()) / 1000));
-      } else {
-        // Clear expired cooldown
-        sessionStorage.removeItem('cooldownEndTime');
-        sessionStorage.removeItem('loginAttempts');
+    const loadSecurityState = () => {
+      const { LOGIN_ATTEMPTS, COOLDOWN_END_TIME } = SECURITY_CONFIG.SESSION_STORAGE_KEYS;
+      const storedAttempts = sessionStorage.getItem(LOGIN_ATTEMPTS);
+      const storedCooldown = sessionStorage.getItem(COOLDOWN_END_TIME);
+      
+      if (storedAttempts) {
+        setLoginAttempts(parseInt(storedAttempts));
       }
-    }
+      
+      if (storedCooldown) {
+        const endTime = parseInt(storedCooldown);
+        if (Date.now() < endTime) {
+          setCooldownEndTime(endTime);
+          setTimeLeft(Math.ceil((endTime - Date.now()) / 1000));
+        } else {
+          clearSecurityState();
+        }
+      }
+    };
+
+    loadSecurityState();
   }, []);
 
+  // Cooldown timer
   useEffect(() => {
     let timer;
     if (cooldownEndTime && timeLeft > 0) {
@@ -56,94 +79,94 @@ const Login = () => {
         setTimeLeft(newTimeLeft);
         
         if (newTimeLeft === 0) {
-          setCooldownEndTime(null);
-          setLoginAttempts(0);
-          sessionStorage.removeItem('cooldownEndTime');
-          sessionStorage.removeItem('loginAttempts');
+          clearSecurityState();
         }
       }, 1000);
     }
     return () => clearInterval(timer);
   }, [cooldownEndTime, timeLeft]);
 
-  // Sanitize input to prevent XSS
-  const sanitizeInput = (input) => {
-    return input.replace(/[<>{}]/g, '').trim();
-  };
+  // Clear security state
+  const clearSecurityState = useCallback(() => {
+    const { LOGIN_ATTEMPTS, COOLDOWN_END_TIME } = SECURITY_CONFIG.SESSION_STORAGE_KEYS;
+    setCooldownEndTime(null);
+    setLoginAttempts(0);
+    sessionStorage.removeItem(LOGIN_ATTEMPTS);
+    sessionStorage.removeItem(COOLDOWN_END_TIME);
+  }, []);
 
-  const validateForm = () => {
+  // Enhanced input sanitization
+  const sanitizeInput = useCallback((input) => {
+    return input.replace(VALIDATION.SANITIZE_REGEX, '').trim();
+  }, []);
+
+  // Form validation
+  const validateForm = useCallback(() => {
     const newErrors = {};
+    const { EMAIL_REGEX } = VALIDATION;
+    const { PASSWORD_MIN_LENGTH } = SECURITY_CONFIG;
     
-    // Email validation with strict regex
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     if (!formData.email) {
       newErrors.email = 'Email wajib diisi';
-    } else if (!emailRegex.test(formData.email)) {
+    } else if (!EMAIL_REGEX.test(formData.email)) {
       newErrors.email = 'Masukkan alamat email yang valid';
     }
 
-    // Basic password validation
     if (!formData.password) {
       newErrors.password = 'Kata sandi wajib diisi';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Kata sandi minimal 6 karakter';
+    } else if (formData.password.length < PASSWORD_MIN_LENGTH) {
+      newErrors.password = `Kata sandi minimal ${PASSWORD_MIN_LENGTH} karakter`;
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [formData]);
 
-  const handleChange = (e) => {
+  // Handle form input changes
+  const handleChange = useCallback((e) => {
     const { name, value } = e.target;
-    // Sanitize input
     const sanitizedValue = sanitizeInput(value);
     
-    setFormData(prev => ({
-      ...prev,
-      [name]: sanitizedValue
-    }));
+    setFormData(prev => ({ ...prev, [name]: sanitizedValue }));
+    setErrors(prev => ({ ...prev, [name]: '', general: '' }));
+  }, [sanitizeInput]);
 
-    if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }));
-    }
-  };
-
-  const logSecurityEvent = async (eventType, details) => {
+  // Enhanced security logging
+  const logSecurityEvent = useCallback(async (eventType, details) => {
     try {
       const encryptedDetails = encryptData({
         eventType,
         details,
         timestamp: new Date().toISOString(),
         userAgent: navigator.userAgent,
-        ip: 'Captured on server'
+        ip: 'Captured on server',
+        deviceInfo: {
+          platform: navigator.platform,
+          language: navigator.language,
+          screenResolution: `${window.screen.width}x${window.screen.height}`
+        }
       });
       
-      // Store in session for analysis
-      const events = JSON.parse(sessionStorage.getItem('securityEvents') || '[]');
+      const { SECURITY_EVENTS } = SECURITY_CONFIG.SESSION_STORAGE_KEYS;
+      const events = JSON.parse(sessionStorage.getItem(SECURITY_EVENTS) || '[]');
       events.push(encryptedDetails);
-      sessionStorage.setItem('securityEvents', JSON.stringify(events));
-      
-      // You could also send to your security monitoring service here
+      sessionStorage.setItem(SECURITY_EVENTS, JSON.stringify(events));
     } catch (error) {
       console.error('Error logging security event:', error);
     }
-  };
+  }, []);
 
+  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Prevent rapid-fire attempts
     const timeSinceLastAttempt = Date.now() - lastAttemptTime;
-    if (timeSinceLastAttempt < MIN_ATTEMPT_INTERVAL) {
+    if (timeSinceLastAttempt < SECURITY_CONFIG.MIN_ATTEMPT_INTERVAL) {
       setErrors({ general: 'Terlalu cepat. Mohon tunggu sebentar.' });
       return;
     }
     setLastAttemptTime(Date.now());
 
-    // Check if in cooldown period
     if (cooldownEndTime && Date.now() < cooldownEndTime) {
       setErrors({ general: `Silakan tunggu ${timeLeft} detik sebelum mencoba lagi.` });
       logSecurityEvent('cooldown_attempt', { email: formData.email });
@@ -157,13 +180,8 @@ const Login = () => {
 
     setLoading(true);
     try {
-      // Hash password before sending (additional security layer)
       const hashedPassword = hashData(formData.password);
-      
-      // Sign in with Firebase Auth
       const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
-      
-      // Get user document from Firestore
       const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
       
       if (!userDoc.exists()) {
@@ -171,66 +189,63 @@ const Login = () => {
       }
 
       const userData = userDoc.data();
-
-      // Create secure session
       const sessionData = {
         uid: userCredential.user.uid,
         email: formData.email,
         timestamp: Date.now(),
-        userAgent: navigator.userAgent
+        userAgent: navigator.userAgent,
+        lastLogin: new Date().toISOString()
       };
       
-      // Encrypt and store session data
       const encryptedSession = encryptData(sessionData);
-      setCookie('user_session', encryptedSession, { secure: true, sameSite: 'Strict' });
+      setCookie('user_session', encryptedSession, { 
+        secure: true, 
+        sameSite: 'Strict',
+        maxAge: 3600 // 1 hour
+      });
 
-      // Reset security measures on successful login
-      setLoginAttempts(0);
-      setCooldownEndTime(null);
-      sessionStorage.removeItem('loginAttempts');
-      sessionStorage.removeItem('cooldownEndTime');
-
+      clearSecurityState();
       logSecurityEvent('successful_login', { email: formData.email });
 
-      // Check user status
       switch (userData.status) {
+        case 'active':
+          navigate('/dashboard');
+          break;
         case 'pending':
           navigate('/signup-confirmation');
           break;
         case 'suspended':
-          logSecurityEvent('suspended_account_attempt', { email: formData.email });
-          throw new Error('Akun Anda telah dinonaktifkan. Silakan hubungi administrator.');
         case 'inactive':
-          logSecurityEvent('inactive_account_attempt', { email: formData.email });
-          throw new Error('Akun Anda tidak aktif. Silakan hubungi administrator.');
-        case 'active':
-          navigate('/dashboard');
-          break;
+          logSecurityEvent(`${userData.status}_account_attempt`, { email: formData.email });
+          throw new Error(
+            userData.status === 'suspended' 
+              ? 'Akun Anda telah dinonaktifkan. Silakan hubungi administrator.'
+              : 'Akun Anda tidak aktif. Silakan hubungi administrator.'
+          );
         default:
           throw new Error('Status akun tidak valid');
       }
     } catch (error) {
       console.error('Login error:', error);
       
-      // Increment login attempts
       const newAttempts = loginAttempts + 1;
       setLoginAttempts(newAttempts);
-      sessionStorage.setItem('loginAttempts', newAttempts.toString());
+      sessionStorage.setItem(SECURITY_CONFIG.SESSION_STORAGE_KEYS.LOGIN_ATTEMPTS, newAttempts.toString());
 
       logSecurityEvent('failed_login_attempt', { 
         email: formData.email, 
         attemptNumber: newAttempts,
-        errorMessage: error.message
+        errorMessage: error.message,
+        timestamp: new Date().toISOString()
       });
 
-      // Enhanced cooldown logic
-      if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
-        const endTime = Date.now() + COOLDOWN_DURATION;
+      if (newAttempts >= SECURITY_CONFIG.MAX_LOGIN_ATTEMPTS) {
+        const endTime = Date.now() + SECURITY_CONFIG.COOLDOWN_DURATION;
         setCooldownEndTime(endTime);
-        setTimeLeft(Math.ceil(COOLDOWN_DURATION / 1000));
-        sessionStorage.setItem('cooldownEndTime', endTime.toString());
+        setTimeLeft(Math.ceil(SECURITY_CONFIG.COOLDOWN_DURATION / 1000));
+        sessionStorage.setItem(SECURITY_CONFIG.SESSION_STORAGE_KEYS.COOLDOWN_END_TIME, endTime.toString());
         setErrors({ 
-          general: `Terlalu banyak percobaan gagal. Silakan tunggu ${Math.ceil(COOLDOWN_DURATION / 1000)} detik sebelum mencoba lagi.` 
+          general: `Terlalu banyak percobaan gagal. Silakan tunggu ${Math.ceil(SECURITY_CONFIG.COOLDOWN_DURATION / 1000)} detik sebelum mencoba lagi.` 
         });
       } else {
         setErrors({
@@ -249,20 +264,32 @@ const Login = () => {
       {/* Centered Login Form */}
       <div className="flex-1 flex flex-col justify-center py-12 px-4 sm:px-6 lg:max-w-[1024px]">
         <div className="mx-auto w-full max-w-sm lg:w-[480px]">
-          <img className="mx-auto h-20 w-auto" src={iBRDLogo} alt="i-BRD System" />
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Selamat Datang Kembali
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Silakan masuk ke akun Anda
-          </p>
+          <div className="flex flex-col items-center space-y-4">
+            <img 
+              className="h-20 w-auto transform hover:scale-105 transition-transform duration-200" 
+              src={iBRDLogo} 
+              alt="i-BRD System" 
+            />
+            <h2 className="text-3xl font-extrabold text-gray-900 text-center">
+              Selamat Datang Kembali
+            </h2>
+            <p className="text-sm text-gray-600 text-center max-w-[280px]">
+              Silakan masuk ke akun Anda untuk mengakses sistem BRD
+            </p>
+          </div>
         </div>
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-4 shadow-xl rounded-lg sm:px-10 border border-gray-100">
-            <form className="space-y-6" onSubmit={handleSubmit}>
+          <div className="bg-white py-8 px-4 shadow-xl rounded-lg sm:px-10 border border-gray-100 relative overflow-hidden">
+            {/* Progress bar during loading */}
+            {loading && (
+              <div className="absolute top-0 left-0 h-1 bg-blue-600 animate-progress w-full transform origin-left"></div>
+            )}
+            
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Error Messages */}
               {errors.general && (
-                <div className="rounded-md bg-red-50 p-4">
+                <div className="rounded-md bg-red-50 p-4 animate-fadeIn">
                   <div className="flex">
                     <div className="flex-shrink-0">
                       <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -276,11 +303,12 @@ const Login = () => {
                 </div>
               )}
 
-              <div>
+              {/* Email Field */}
+              <div className="space-y-1">
                 <label htmlFor="email" className="block text-sm font-medium text-gray-700">
                   Alamat Email
                 </label>
-                <div className="mt-1 relative">
+                <div className="mt-1 relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
                       <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
@@ -296,22 +324,30 @@ const Login = () => {
                     value={formData.email}
                     onChange={handleChange}
                     className={`appearance-none block w-full pl-10 pr-3 py-2 border ${
-                      errors.email ? 'border-red-300' : 'border-gray-300'
-                    } rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm`}
+                      errors.email ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
+                    } rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm transition-colors duration-200`}
                     placeholder="Masukkan alamat email Anda"
-                    disabled={loading || (cooldownEndTime && Date.now() < cooldownEndTime)}
+                    disabled={isFormDisabled}
                   />
+                  {errors.email && (
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  )}
                 </div>
                 {errors.email && (
-                  <p className="mt-2 text-sm text-red-600">{errors.email}</p>
+                  <p className="mt-2 text-sm text-red-600 animate-fadeIn">{errors.email}</p>
                 )}
               </div>
 
-              <div>
+              {/* Password Field */}
+              <div className="space-y-1">
                 <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                   Kata Sandi
                 </label>
-                <div className="mt-1 relative">
+                <div className="mt-1 relative rounded-md shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
@@ -326,23 +362,23 @@ const Login = () => {
                     value={formData.password}
                     onChange={handleChange}
                     className={`appearance-none block w-full pl-10 pr-10 py-2 border ${
-                      errors.password ? 'border-red-300' : 'border-gray-300'
-                    } rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm`}
+                      errors.password ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
+                    } rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm transition-colors duration-200`}
                     placeholder="Masukkan kata sandi Anda"
-                    disabled={loading || (cooldownEndTime && Date.now() < cooldownEndTime)}
+                    disabled={isFormDisabled}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                    disabled={loading}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center focus:outline-none"
+                    disabled={isFormDisabled}
                   >
                     {showPassword ? (
-                      <svg className="h-5 w-5 text-gray-400 hover:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="h-5 w-5 text-gray-400 hover:text-gray-500 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                       </svg>
                     ) : (
-                      <svg className="h-5 w-5 text-gray-400 hover:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="h-5 w-5 text-gray-400 hover:text-gray-500 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
@@ -350,18 +386,58 @@ const Login = () => {
                   </button>
                 </div>
                 {errors.password && (
-                  <p className="mt-2 text-sm text-red-600">{errors.password}</p>
+                  <p className="mt-2 text-sm text-red-600 animate-fadeIn">{errors.password}</p>
                 )}
               </div>
 
+              {/* Remember Me and Forgot Password */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <input
+                    id="remember-me"
+                    name="remember-me"
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="h-4 w-4 text-blue-900 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                    disabled={isFormDisabled}
+                  />
+                  <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-700 cursor-pointer">
+                    Ingat saya
+                  </label>
+                </div>
+                <div className="text-sm">
+                  <Link
+                    to="/forgot-password"
+                    className="font-medium text-blue-900 hover:text-blue-800 transition-colors duration-200 flex items-center group"
+                  >
+                    <svg 
+                      className="w-4 h-4 mr-1 text-blue-900 group-hover:text-blue-800 transition-colors duration-200" 
+                      fill="none" 
+                      viewBox="0 0 24 24" 
+                      stroke="currentColor"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" 
+                      />
+                    </svg>
+                    Lupa kata sandi?
+                  </Link>
+                </div>
+              </div>
+
+              {/* Submit Button */}
               <div>
                 <button
                   type="submit"
-                  disabled={loading || (cooldownEndTime && Date.now() < cooldownEndTime)}
-                  className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                    loading || (cooldownEndTime && Date.now() < cooldownEndTime)
+                  disabled={isFormDisabled}
+                  className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white transition-all duration-200 ${
+                    isFormDisabled
                       ? 'bg-gray-400 cursor-not-allowed'
-                      : 'bg-blue-900 hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                      : 'bg-blue-900 hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transform hover:-translate-y-0.5'
                   }`}
                 >
                   {loading ? (
@@ -372,48 +448,53 @@ const Login = () => {
                       </svg>
                       Masuk...
                     </div>
-                  ) : cooldownEndTime && Date.now() < cooldownEndTime ? (
-                    'Menunggu... (10 detik)'
+                  ) : isFormDisabled ? (
+                    <div className="flex items-center">
+                      <svg className="animate-pulse -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Menunggu... ({timeLeft}s)
+                    </div>
                   ) : (
                     'Masuk'
                   )}
                 </button>
               </div>
-            </form>
 
-            <div className="mt-6">
+              {/* Divider */}
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-gray-300"></div>
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-gray-500">Belum punya akun?</span>
+                  <span className="px-2 bg-white text-gray-500">
+                    Belum punya akun?
+                  </span>
                 </div>
               </div>
 
-              <div className="mt-6">
+              {/* Sign Up Link */}
+              <div>
                 <Link
                   to="/signup"
-                  className="w-full flex justify-center py-2 px-4 border border-blue-900 rounded-md shadow-sm text-sm font-medium text-blue-900 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  className="w-full flex justify-center py-2 px-4 border border-blue-900 rounded-md shadow-sm text-sm font-medium text-blue-900 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 transform hover:-translate-y-0.5"
                 >
                   Buat akun baru
                 </Link>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       </div>
 
-      {/* Batik Background - Absolute positioned */}
+      {/* Batik Background */}
       <div 
-        className="fixed inset-0 pointer-events-none"
+        className="fixed inset-0 pointer-events-none opacity-15 transition-opacity duration-1000"
         style={{
           backgroundImage: `url(${batikBg})`,
           backgroundSize: 'contain',
           backgroundPosition: 'right',
-          backgroundRepeat: 'no-repeat',
-          opacity: 0.15,
-          zIndex: 0
+          backgroundRepeat: 'no-repeat'
         }}
       />
     </div>
