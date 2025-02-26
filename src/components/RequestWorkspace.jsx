@@ -566,6 +566,11 @@ Setiap bagian harus mencakup:
       return;
     }
 
+    if (!selectedTemplate) {
+      toast.error("Silakan pilih template terlebih dahulu");
+      return;
+    }
+
     try {
       setGenerating(true);
       setError(null);
@@ -575,84 +580,162 @@ Setiap bagian harus mencakup:
       const settingsSnap = await getDoc(settingsRef);
       const systemSettings = settingsSnap.data();
       
-      // Prepare the content for generation
+      // Prepare the content for generation based on template structure
       const templateStructure = selectedTemplate?.structure?.sections || [];
-      const filledSections = {};
+      const structuredContent = templateStructure.map((section, index) => {
+        const sectionFields = {};
+        let hasData = false;
 
-      // Collect filled fields for each section
-      templateStructure.forEach(section => {
-      const filledFields = {};
+        // Collect filled fields for each section
         section.fieldConfigs?.forEach(field => {
           if (formData[field.name]) {
-            filledFields[field.label] = formData[field.name];
+            sectionFields[field.label] = formData[field.name];
+            hasData = true;
           }
         });
-        if (Object.keys(filledFields).length > 0) {
-          filledSections[section.title] = filledFields;
-        }
+
+        return {
+          title: section.title,
+          number: index + 1,
+          description: section.description || '',
+          content: hasData ? sectionFields : 'Bagian ini belum memiliki data yang diisi'
+        };
       });
 
-      // Create the prompt content
-      const promptContent = `${systemSettings?.defaultPrompts?.brdGeneration || ''}
+      // Create structured prompt with template adherence
+      const promptContent = `
+Gunakan struktur template berikut untuk membuat BRD berdasarkan data yang telah diisi:
 
-${systemSettings?.defaultPrompts?.brdInstruction || 'Generate BRD based on the following information:'}
+${structuredContent.map(section => `
+${section.number}. ${section.title}
+${section.description ? `Deskripsi: ${section.description}\n` : ''}
+${typeof section.content === 'string' 
+  ? section.content 
+  : Object.entries(section.content)
+      .map(([label, value]) => `${label}: ${value}`)
+      .join('\n')
+}
+`).join('\n')}
 
-${Object.entries(filledSections).map(([section, fields]) => `
-${section.toUpperCase()}:
-${Object.entries(fields).map(([label, value]) => `${label}: ${value}`).join('\n')}
-`).join('\n')}`;
+${templateStructure.map((section, index) => `
+Untuk bagian ${index + 1}. ${section.title}:
+${section.fieldConfigs?.map(field => `- ${field.label}: ${formData[field.name] || 'Tidak ada data'}`).join('\n')}
+`).join('\n')}
 
-      console.log('Sending prompt to Groq:', promptContent);
+PETUNJUK WAJIB:
+1. WAJIB mengikuti struktur template yang telah ditentukan
+2. HANYA menggunakan data yang telah diisi pengguna
+3. DILARANG menambahkan informasi di luar data yang diisi
+4. Setiap bagian HARUS berdasarkan data formulir
+5. Untuk bagian tanpa data, tuliskan "Bagian ini belum memiliki data yang diisi"
 
-      // Make the API call to Groq
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+ATURAN PENULISAN:
+1. Penomoran Sesuai Template:
+   - Bagian Utama: 1., 2., 3., 
+   - Sub-bagian: 1.1., 1.2.,
+   - Rincian: 1.1.1., 1.1.2.,
+
+2. Struktur Setiap Bagian:
+   - Awali dengan penjelasan tujuan bagian
+   - Uraikan data yang telah diisi
+   - Berikan analisis sesuai data tersebut
+   - Tutup dengan kesimpulan berdasarkan data
+
+3. Penggunaan Bahasa:
+   - Gunakan Bahasa Indonesia yang baku dan formal
+   - Gunakan kalimat efektif dan lugas
+   - Hindari istilah asing (kecuali yang umum dalam perbankan)
+   - Konsisten dalam penggunaan istilah
+
+4. Tata Tulis:
+   - Gunakan tanda baca yang tepat
+   - Perhatikan penulisan huruf kapital
+   - Paragraf harus terstruktur dan mudah dibaca
+   - Gunakan kata penghubung yang tepat
+
+HAL PENTING:
+- DILARANG membuat asumsi atau menambah informasi di luar data
+- DILARANG menggunakan kalimat template umum
+- Setiap bagian WAJIB berdasarkan data yang telah diisi
+- Bagian tanpa data WAJIB ditandai dengan jelas
+- Fokus pada kejelasan dan ketepatan informasi`;
+
+      // Call Gemini AI API
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + import.meta.env.VITE_GEMINI_API_KEY, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'mixtral-8x7b-32768',
-          messages: [
+          contents: [{
+            parts: [{
+              text: promptContent
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 8192,
+            topK: 1,
+            topP: 0.8
+          },
+          safetySettings: [
             {
-              role: 'system',
-              content: systemSettings?.defaultPrompts?.brdGeneration || ''
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_NONE"
             },
             {
-              role: 'user',
-              content: promptContent
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_NONE"
+            },
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_NONE"
+            },
+            {
+              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+              threshold: "BLOCK_NONE"
             }
-          ],
-          temperature: 0.7,
-          max_tokens: 32000
+          ]
         })
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate BRD content');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Gemini API Error Response:', errorData);
+        throw new Error(`Gagal generate BRD: ${errorData.error?.message || response.statusText}`);
       }
 
       const data = await response.json();
-      let generatedText = data.choices[0].message.content;
+      
+      if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        throw new Error('Format response tidak valid dari API');
+      }
+
+      let generatedText = data.candidates[0].content.parts[0].text;
 
       // Clean up the generated text
-      generatedText = generatedText
+      const cleanedText = generatedText
         .replace(/\*\*/g, '') // Remove all double asterisks
         .replace(/\*/g, '')   // Remove any remaining single asterisks
         .replace(/`/g, '')    // Remove backticks
         .replace(/_{2,}/g, '') // Remove underscores
-        .trim();              // Remove extra whitespace
-
-      console.log('Generated content:', generatedText);
+        .replace(/^\s+|\s+$/g, '') // Remove leading/trailing whitespace
+        .replace(/\n{3,}/g, '\n\n'); // Replace multiple newlines with double newlines
 
       // Update request document with generated content and change turn
       const requestRef = doc(db, 'brd_requests', requestId);
       await updateDoc(requestRef, {
         generatedContent: {
-          info_project: generatedText
+          info_project: cleanedText
         },
         status: 'Already Generated',
         currentEditor: request?.currentEditor === 'analyst' ? 'requester' : 'analyst',
+        lastSavedBy: {
+          uid: user.uid,
+          name: profile.namaLengkap,
+          role: profile.role,
+          timestamp: serverTimestamp()
+        },
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
         updatedByName: profile.namaLengkap
@@ -673,7 +756,7 @@ ${Object.entries(fields).map(([label, value]) => `${label}: ${value}`).join('\n'
       setRequest(prev => ({
         ...prev,
         generatedContent: {
-          info_project: generatedText
+          info_project: cleanedText
         },
         status: 'Already Generated',
         currentEditor: newEditor,
@@ -683,7 +766,8 @@ ${Object.entries(fields).map(([label, value]) => `${label}: ${value}`).join('\n'
       }));
       
       setCurrentEditor(newEditor);
-      setActiveTab('view');
+      // Switch to Lihat BRD tab
+      setActiveTab('lihat_brd');
 
       // Single success notification with complete information
       const nextEditor = newEditor === 'analyst' ? 'Business Analyst' : 'Requester';
