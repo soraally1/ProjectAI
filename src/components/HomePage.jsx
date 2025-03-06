@@ -68,10 +68,13 @@ const HomePage = () => {
       case 'Pending Review':
         return `Menunggu review dari ${request.assignedAnalystName || '-'}`;
       case 'In Progress':
+      case 'Sedang Diproses':
         return `Sedang dikerjakan oleh ${request.assignedAnalystName || '-'}`;
       case 'Already Generated':
+      case 'Pembuatan Dokumen':
         return `BRD telah dibuat oleh ${request.assignedAnalystName || '-'}`;
       case 'Completed':
+      case 'Selesai':
         return `Selesai dikerjakan oleh ${request.assignedAnalystName || '-'}`;
       case 'Rejected':
         return `Ditolak${request.rejectReason ? `: ${request.rejectReason}` : ''}`;
@@ -87,10 +90,13 @@ const HomePage = () => {
       case 'Pending Review':
         return 'bg-amber-50 text-amber-700';
       case 'In Progress':
+      case 'Sedang Diproses':
         return 'bg-indigo-50 text-indigo-700';
       case 'Already Generated':
+      case 'Pembuatan Dokumen':
         return 'bg-emerald-50 text-emerald-700';
       case 'Completed':
+      case 'Selesai':
         return 'bg-green-50 text-green-700';
       case 'Rejected':
         return 'bg-red-50 text-red-700';
@@ -167,7 +173,22 @@ const HomePage = () => {
 
   const getFilteredRequests = () => {
     return requests.filter(request => {
-      const matchesStatus = filterStatus === 'all' || request.status === filterStatus;
+      let matchesStatus = filterStatus === 'all';
+      
+      if (!matchesStatus) {
+        if (filterStatus === 'In Progress') {
+          matchesStatus = request.status === 'In Progress' || request.status === 'Sedang Diproses';
+        } else if (filterStatus === 'Sedang Diproses') {
+          matchesStatus = request.status === 'In Progress' || request.status === 'Sedang Diproses';
+        } else if (filterStatus === 'Pembuatan Dokumen') {
+          matchesStatus = request.status === 'Generated' || request.status === 'Already Generated' || request.status === 'Pembuatan Dokumen';
+        } else if (filterStatus === 'Selesai') {
+          matchesStatus = request.status === 'Completed' || request.status === 'Selesai';
+        } else {
+          matchesStatus = request.status === filterStatus;
+        }
+      }
+      
       const matchesSearch = 
         request.aplikasiDikembangkan?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         request.fiturDikembangkan?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -224,7 +245,7 @@ const HomePage = () => {
         />
         <StatCard
           title="Sedang Diproses"
-          value={requests.filter(r => r.status === 'In Progress').length}
+          value={requests.filter(r => r.status === 'In Progress' || r.status === 'Sedang Diproses').length}
           icon={
             <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -235,7 +256,7 @@ const HomePage = () => {
         />
         <StatCard
           title="Selesai"
-          value={requests.filter(r => r.status === 'Completed').length}
+          value={requests.filter(r => r.status === 'Completed' || r.status === 'Selesai').length}
           icon={
             <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -298,8 +319,9 @@ const HomePage = () => {
                     <option value="New">Baru</option>
                     <option value="Pending Review">Menunggu Review</option>
                     <option value="In Progress">Sedang Diproses</option>
-                    <option value="Generated">Selesai Dibuat</option>
-                    <option value="Completed">Selesai</option>
+                    <option value="Sedang Diproses">Sedang Diproses</option>
+                    <option value="Pembuatan Dokumen">Pembuatan Dokumen</option>
+                    <option value="Selesai">Selesai</option>
                     <option value="Rejected">Ditolak</option>
                   </select>
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
@@ -466,9 +488,9 @@ const HomePage = () => {
                           <span className="mr-1.5">{getStatusIcon(request.status)}</span>
                           {request.status === 'New' ? 'Baru' :
                            request.status === 'Pending Review' ? 'Menunggu Review' :
-                           request.status === 'In Progress' ? 'Sedang Diproses' :
-                           request.status === 'Generated' ? 'Selesai Dibuat' :
-                           request.status === 'Completed' ? 'Selesai' :
+                           request.status === 'In Progress' || request.status === 'Sedang Diproses' ? 'Sedang Diproses' :
+                           request.status === 'Generated' || request.status === 'Already Generated' || request.status === 'Pembuatan Dokumen' ? 'Pembuatan Dokumen' :
+                           request.status === 'Completed' || request.status === 'Selesai' ? 'Selesai' :
                            request.status === 'Rejected' ? 'Ditolak' :
                            request.status}
                         </span>
@@ -507,12 +529,13 @@ const HomePage = () => {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      {(request.status === 'In Progress' || request.status === 'Already Generated') ? (
+                      {(request.status === 'In Progress' || request.status === 'Already Generated' || 
+                        request.status === 'Sedang Diproses' || request.status === 'Pembuatan Dokumen') ? (
                         <Link
                           to={`/dashboard/request/${request.id}`}
                           className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors duration-200"
                         >
-                          {request.status === 'Already Generated' ? 'Lihat Detail' : 'Buka Ruang Kerja'}
+                          {request.status === 'Already Generated' || request.status === 'Pembuatan Dokumen' ? 'Lihat Detail' : 'Buka Ruang Kerja'}
                           <svg className="w-4 h-4 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                           </svg>
@@ -520,7 +543,7 @@ const HomePage = () => {
                       ) : (
                         <div className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg text-gray-400 bg-gray-50 cursor-not-allowed">
                           <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            {request.status === 'Completed' ? (
+                            {request.status === 'Completed' || request.status === 'Selesai' ? (
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                             ) : (
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -529,7 +552,7 @@ const HomePage = () => {
                           {!request.assignedAnalystId ? 'Menunggu Penugasan' : 
                            request.status === 'New' ? 'Menunggu Review Analyst' :
                            request.status === 'Pending Review' ? 'Menunggu Review' :
-                           request.status === 'Completed' ? 'BRD Telah Selesai' : 'Tidak Dapat Diakses'}
+                           request.status === 'Completed' || request.status === 'Selesai' ? 'BRD Telah Selesai' : 'Tidak Dapat Diakses'}
                         </div>
                       )}
                     </td>

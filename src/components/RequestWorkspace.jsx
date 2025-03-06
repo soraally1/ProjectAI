@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, updateDoc, addDoc, onSnapshot, serverTimestamp, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, updateDoc, addDoc, onSnapshot, serverTimestamp, deleteDoc, query, orderBy, where, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useUser } from '../context/UserContext';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import bankLogo from '../assets/i-BRDSystem.svg';
 import { Document, Packer, Paragraph, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType } from 'docx';
+import { marked } from 'marked';
+import ReactMarkdown from 'react-markdown';
+import cookie from 'react-cookies';
 
 const RequestWorkspace = () => {
   const { requestId } = useParams();
@@ -50,6 +53,22 @@ const RequestWorkspace = () => {
   // Add this state near the top with other state declarations
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [modifiedFields, setModifiedFields] = useState(new Set());
+
+  // Add new states for parameter-wise generation
+  const [generatingSection, setGeneratingSection] = useState(null);
+  const [generatedSections, setGeneratedSections] = useState({});
+  const [sectionStatus, setSectionStatus] = useState({});
+
+  // Add new state for field-level generation
+  const [generatingField, setGeneratingField] = useState(null);
+  const [generatedFields, setGeneratedFields] = useState({});
+
+  // Add new state for BRD preview
+  const [brdPreview, setBrdPreview] = useState(null);
+
+  // Add a new state for storing previous generations history
+  const [generationHistory, setGenerationHistory] = useState({});
+  const [showHistoryFor, setShowHistoryFor] = useState(null);
 
   // Helper function to convert numbers to Roman numerals
   const toRomanNumeral = (num) => {
@@ -172,7 +191,7 @@ const RequestWorkspace = () => {
 
   // Add new useEffect for completed BRD handling
   useEffect(() => {
-    if (request?.status === 'Completed') {
+    if (request?.status === 'Selesai') {
       toast.info('BRD telah selesai. Anda akan diarahkan ke dashboard.');
       setTimeout(() => {
         navigate('/dashboard');
@@ -483,7 +502,7 @@ Setiap bagian harus mencakup:
   };
 
   const handleFieldChange = (fieldName, value) => {
-    if (request?.status === 'Completed') {
+    if (request?.status === 'Selesai') {
       toast.warning('BRD telah selesai dan tidak dapat diubah.');
       return;
     }
@@ -556,230 +575,210 @@ Setiap bagian harus mencakup:
     fetchGeneratedContent();
   }, [request?.generatedContent]);
 
-  // Update the handleGenerateBRD function's content parsing
-  const handleGenerateBRD = async () => {
-    if (
-      (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
-      (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
-    ) {
-      toast.error("Anda tidak dapat membuat BRD saat bukan giliran Anda");
+  // Function to generate single section
+  const handleGenerateSection = async (section, index) => {
+    if (!canEdit()) {
+      toast.error('Anda tidak memiliki akses untuk mengedit dokumen ini');
       return;
     }
 
-    if (!selectedTemplate) {
-      toast.error("Silakan pilih template terlebih dahulu");
-      return;
-    }
+    setGeneratingSection(section.title);
+    
+    // Create prompt for single section
+    const promptContent = `Anda adalah Business Analyst senior di Bank Jateng dengan pengalaman lebih dari 10 tahun.
+Tugas: Buat konten untuk bagian "${section.title}" dari BRD berdasarkan data berikut:
 
-    try {
-      setGenerating(true);
-      setError(null);
-      
-      // Get system settings for prompts
-      const settingsRef = doc(db, 'system_settings', 'general');
-      const settingsSnap = await getDoc(settingsRef);
-      const systemSettings = settingsSnap.data();
-      
-      // Prepare the content for generation based on template structure
-      const templateStructure = selectedTemplate?.structure?.sections || [];
-      const structuredContent = templateStructure.map((section, index) => {
-        const sectionFields = {};
-        let hasData = false;
-
-        // Collect filled fields for each section
-        section.fieldConfigs?.forEach(field => {
-          if (formData[field.name]) {
-            sectionFields[field.label] = formData[field.name];
-            hasData = true;
-          }
-        });
-
-        return {
-          title: section.title,
-          number: index + 1,
-          description: section.description || '',
-          content: hasData ? sectionFields : 'Bagian ini belum memiliki data yang diisi'
-        };
-      });
-
-      // Create structured prompt with template adherence
-      const promptContent = `
-Gunakan struktur template berikut untuk membuat BRD berdasarkan data yang telah diisi:
-
-${structuredContent.map(section => `
+BAGIAN YANG AKAN DIBUAT:
 ${section.number}. ${section.title}
-${section.description ? `Deskripsi: ${section.description}\n` : ''}
-${typeof section.content === 'string' 
-  ? section.content 
-  : Object.entries(section.content)
-      .map(([label, value]) => `${label}: ${value}`)
-      .join('\n')
-}
-`).join('\n')}
+${section.description ? `Deskripsi Bagian: ${section.description}` : ''}
 
-${templateStructure.map((section, index) => `
-Untuk bagian ${index + 1}. ${section.title}:
-${section.fieldConfigs?.map(field => `- ${field.label}: ${formData[field.name] || 'Tidak ada data'}`).join('\n')}
-`).join('\n')}
+DATA YANG TERSEDIA:
+${section.fieldConfigs?.map(field => {
+    const value = formData[field.name];
+  return value ? `${field.label}:\n${value}` : null;
+}).filter(Boolean).join('\n\n') || 'Bagian ini belum memiliki data yang diisi'}
 
-PETUNJUK WAJIB:
-1. WAJIB mengikuti struktur template yang telah ditentukan
-2. HANYA menggunakan data yang telah diisi pengguna
-3. DILARANG menambahkan informasi di luar data yang diisi
-4. Setiap bagian HARUS berdasarkan data formulir
-5. Untuk bagian tanpa data, tuliskan "Bagian ini belum memiliki data yang diisi"
+INSTRUKSI:
+1. Buat konten HANYA untuk bagian "${section.title}"
+2. HANYA gunakan data yang tersedia di atas
+3. Jika tidak ada data, tulis "Bagian ini belum memiliki data yang diisi"
+4. Gunakan Bahasa Indonesia yang baku dan formal
+5. DILARANG menambah informasi di luar data yang ada
 
-ATURAN PENULISAN:
-1. Penomoran Sesuai Template:
-   - Bagian Utama: 1., 2., 3., 
-   - Sub-bagian: 1.1., 1.2.,
-   - Rincian: 1.1.1., 1.1.2.,
+FORMAT OUTPUT:
+${section.number}. ${section.title}
+[Isi sesuai data]`;
 
-2. Struktur Setiap Bagian:
-   - Awali dengan penjelasan tujuan bagian
-   - Uraikan data yang telah diisi
-   - Berikan analisis sesuai data tersebut
-   - Tutup dengan kesimpulan berdasarkan data
-
-3. Penggunaan Bahasa:
-   - Gunakan Bahasa Indonesia yang baku dan formal
-   - Gunakan kalimat efektif dan lugas
-   - Hindari istilah asing (kecuali yang umum dalam perbankan)
-   - Konsisten dalam penggunaan istilah
-
-4. Tata Tulis:
-   - Gunakan tanda baca yang tepat
-   - Perhatikan penulisan huruf kapital
-   - Paragraf harus terstruktur dan mudah dibaca
-   - Gunakan kata penghubung yang tepat
-
-HAL PENTING:
-- DILARANG membuat asumsi atau menambah informasi di luar data
-- DILARANG menggunakan kalimat template umum
-- Setiap bagian WAJIB berdasarkan data yang telah diisi
-- Bagian tanpa data WAJIB ditandai dengan jelas
-- Fokus pada kejelasan dan ketepatan informasi`;
-
-      // Call Gemini AI API
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + import.meta.env.VITE_GEMINI_API_KEY, {
+    // Call Gemini API for single section
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + import.meta.env.VITE_GEMINI_API_KEY, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: promptContent
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 8192,
-            topK: 1,
-            topP: 0.8
-          },
-          safetySettings: [
-            {
-              category: "HARM_CATEGORY_HARASSMENT",
-              threshold: "BLOCK_NONE"
-            },
-            {
-              category: "HARM_CATEGORY_HATE_SPEECH",
-              threshold: "BLOCK_NONE"
-            },
-            {
-              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-              threshold: "BLOCK_NONE"
-            },
-            {
-              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-              threshold: "BLOCK_NONE"
-            }
-          ]
+        contents: [{
+          parts: [{
+            text: promptContent
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 8192,
+          topK: 1,
+          topP: 0.1
+        }
         })
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Gemini API Error Response:', errorData);
-        throw new Error(`Gagal generate BRD: ${errorData.error?.message || response.statusText}`);
+      throw new Error(`Gagal generate bagian: ${response.statusText}`);
       }
 
       const data = await response.json();
-      
-      if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
-        throw new Error('Format response tidak valid dari API');
-      }
+    if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Format response tidak valid');
+    }
 
-      let generatedText = data.candidates[0].content.parts[0].text;
+    // Clean up generated text
+    let sectionContent = data.candidates[0].content.parts[0].text
+      .replace(/^\s*\d+\.\s*[^\n]+\n/, '') // Remove section number and title
+      .trim();
 
-      // Clean up the generated text
-      const cleanedText = generatedText
-        .replace(/\*\*/g, '') // Remove all double asterisks
-        .replace(/\*/g, '')   // Remove any remaining single asterisks
-        .replace(/`/g, '')    // Remove backticks
-        .replace(/_{2,}/g, '') // Remove underscores
-        .replace(/^\s+|\s+$/g, '') // Remove leading/trailing whitespace
-        .replace(/\n{3,}/g, '\n\n'); // Replace multiple newlines with double newlines
+    // Update generated sections
+    setGeneratedSections(prev => ({
+      ...prev,
+      [section.title]: sectionContent
+    }));
 
-      // Update request document with generated content and change turn
+    // Save to Firestore
       const requestRef = doc(db, 'brd_requests', requestId);
       await updateDoc(requestRef, {
-        generatedContent: {
-          info_project: cleanedText
-        },
-        status: 'Already Generated',
-        currentEditor: request?.currentEditor === 'analyst' ? 'requester' : 'analyst',
-        lastSavedBy: {
-          uid: user.uid,
-          name: profile.namaLengkap,
-          role: profile.role,
-          timestamp: serverTimestamp()
-        },
+      [`generatedContent.${section.title}`]: sectionContent,
+      status: 'Sedang Diproses',
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
         updatedByName: profile.namaLengkap
       });
 
-      // Add activity log
-      const activityRef = collection(db, 'brd_requests', requestId, 'activities');
-      await addDoc(activityRef, {
-        type: 'brd_generated',
-        timestamp: serverTimestamp(),
-        userId: user.uid,
-        userName: profile.namaLengkap,
-        details: 'BRD content has been generated'
-      });
-
-      // Update all local states at once to prevent multiple re-renders
-      const newEditor = request?.currentEditor === 'analyst' ? 'requester' : 'analyst';
+    // Update local state
       setRequest(prev => ({
         ...prev,
-        generatedContent: {
-          info_project: cleanedText
-        },
-        status: 'Already Generated',
-        currentEditor: newEditor,
-        updatedAt: new Date(),
+      status: 'Sedang Diproses'
+    }));
+
+    // Show success message
+    toast.success(`Bagian "${section.title}" berhasil digenerate`);
+  };
+
+  // Function to handle section approval
+  const handleSectionApproval = async (section, isApproved) => {
+    try {
+      setSectionStatus(prev => ({
+        ...prev,
+        [section.title]: isApproved ? 'approved' : 'questioned'
+      }));
+
+      // Save status to Firestore
+      const requestRef = doc(db, 'brd_requests', requestId);
+      await updateDoc(requestRef, {
+        [`sectionStatus.${section.title}`]: isApproved ? 'approved' : 'questioned',
+        updatedAt: serverTimestamp(),
         updatedBy: user.uid,
         updatedByName: profile.namaLengkap
-      }));
-      
-      setCurrentEditor(newEditor);
-      // Switch to Lihat BRD tab
-      setActiveTab('lihat_brd');
-
-      // Single success notification with complete information
-      const nextEditor = newEditor === 'analyst' ? 'Business Analyst' : 'Requester';
-      toast.success(`BRD berhasil dibuat. Giliran sekarang: ${nextEditor}`, {
-        autoClose: 4000,
-        position: "top-right"
       });
 
+      toast.success(`Status bagian "${section.title}" berhasil diperbarui`);
+    } catch (error) {
+      console.error('Error updating section status:', error);
+      toast.error(`Gagal update status bagian: ${error.message}`);
+    }
+  };
+
+  // Modify the existing handleGenerateBRD function
+  const handleGenerateBRD = async () => {
+    try {
+      setGenerating(true);
+      
+      // Gather all generated fields and organize them by section
+      const consolidatedContent = {};
+      let hasGeneratedContent = false;
+
+      (selectedTemplate?.structure?.sections || request?.templateStructure?.sections || []).forEach(section => {
+        if (section.fieldConfigs) {
+          consolidatedContent[section.title] = {};
+          section.fieldConfigs.forEach(field => {
+            if (generatedFields[field.name]) {
+              hasGeneratedContent = true;
+              consolidatedContent[section.title][field.name] = {
+                label: field.label,
+                content: typeof generatedFields[field.name] === 'object' 
+                  ? generatedFields[field.name].content 
+                  : generatedFields[field.name],
+                input: typeof generatedFields[field.name] === 'object'
+                  ? generatedFields[field.name].originalInput
+                  : (formData[field.name] || '')
+              };
+            }
+          });
+        }
+      });
+
+      if (!hasGeneratedContent) {
+        toast.warning('Belum ada konten yang digenerate. Silakan generate konten untuk setiap field terlebih dahulu.');
+        return;
+      }
+
+      // Create formatted content for preview
+      let formattedContent = `# Business Requirements Document\n\n`;
+      formattedContent += `Nomor: ${request?.nomorSurat || ''}\n`;
+      formattedContent += `Tanggal: ${new Date().toLocaleDateString('id-ID')}\n\n`;
+
+      Object.entries(consolidatedContent).forEach(([sectionTitle, fields]) => {
+        formattedContent += `## ${sectionTitle}\n\n`;
+        Object.entries(fields).forEach(([fieldName, data]) => {
+          formattedContent += `### ${data.label}\n`;
+          formattedContent += `${data.content}\n\n`;
+        });
+      });
+
+      const brdData = {
+        content: formattedContent,
+        generatedAt: serverTimestamp(),
+        generatedBy: {
+          uid: user?.uid || null,
+          name: profile?.namaLengkap || null,
+          role: profile?.role || null
+        },
+        sections: consolidatedContent,
+        version: (request?.consolidatedBRD?.version || 0) + 1
+      };
+
+      // Update request document
+      const requestRef = doc(db, 'brd_requests', requestId);
+      await updateDoc(requestRef, {
+        consolidatedBRD: brdData,
+        status: 'Pembuatan Dokumen',
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid || null,
+        updatedByName: profile?.namaLengkap || null
+      });
+
+      // Update local states
+      setBrdPreview(brdData);
+      setRequest(prev => ({
+        ...prev,
+        consolidatedBRD: {
+          ...brdData,
+          generatedAt: new Date() // Use JavaScript Date for local state
+        },
+        status: 'Pembuatan Dokumen'
+      }));
+
+      setActiveTab('preview');
+      toast.success('BRD berhasil dibuat dan dapat dilihat di tab Lihat BRD');
     } catch (error) {
       console.error('Error generating BRD:', error);
-      setError('Failed to generate BRD: ' + error.message);
-      toast.error('Gagal membuat BRD. Silakan coba lagi.');
+      toast.error('Gagal membuat BRD: ' + error.message);
     } finally {
       setGenerating(false);
     }
@@ -1141,7 +1140,7 @@ HAL PENTING:
   };
 
   const canEdit = () => {
-    if (request?.status === 'Completed') {
+    if (request?.status === 'Selesai') {
       return false;
     }
 
@@ -1558,7 +1557,7 @@ HAL PENTING:
       const requestRef = doc(db, 'brd_requests', requestId);
       
       await updateDoc(requestRef, {
-        status: 'Completed',
+        status: 'Selesai',
         completedAt: serverTimestamp(),
         completedBy: {
           uid: user.uid,
@@ -1595,64 +1594,105 @@ HAL PENTING:
   const handleSaveForm = async () => {
     try {
       setIsSaving(true);
-      const requestRef = doc(db, 'brd_requests', requestId);
+
+      // Get all generated content
+      const allGeneratedContent = {};
+      (selectedTemplate?.structure?.sections || request?.templateStructure?.sections || []).forEach(section => {
+        if (section.fieldConfigs) {
+          section.fieldConfigs.forEach(field => {
+            if (generatedFields[field.name]) {
+              if (!allGeneratedContent[section.title]) {
+                allGeneratedContent[section.title] = {};
+              }
+              
+              // Extract content and originalInput based on the structure
+              const content = typeof generatedFields[field.name] === 'object' 
+                ? generatedFields[field.name].content 
+                : generatedFields[field.name];
+                
+              const originalInput = typeof generatedFields[field.name] === 'object'
+                ? generatedFields[field.name].originalInput
+                : formData[field.name] || null;
+              
+              allGeneratedContent[section.title][field.name] = {
+                content: content,
+                generatedAt: serverTimestamp(),
+                generatedBy: user?.uid || null,
+                generatedByName: profile?.namaLengkap || null,
+                fieldType: field?.type || 'text',
+                sectionTitle: section.title,
+                originalInput: originalInput
+              };
+            }
+          });
+        }
+      });
       
       // Get current request data to preserve existing fields
+      const requestRef = doc(db, 'brd_requests', requestId);
       const currentRequest = await getDoc(requestRef);
+      
       if (!currentRequest.exists()) {
         throw new Error('Request not found');
       }
+
       const currentData = currentRequest.data();
       
-      // Prepare the update data while preserving required fields
-      const updateData = {
-        ...currentData, // Preserve all existing fields
-        formData,
-        currentEditor: request.currentEditor === 'analyst' ? 'requester' : 'analyst',
-        lastSavedBy: {
-          uid: user.uid,
-          name: profile.namaLengkap,
-          role: profile.role,
-          timestamp: serverTimestamp()
-        },
-        updatedAt: serverTimestamp(),
-        updatedBy: user.uid,
-        updatedByName: profile.namaLengkap,
-        // Preserve these critical fields
-        createdBy: currentData.createdBy,
-        assignedAnalystId: currentData.assignedAnalystId,
-        assignedTo: currentData.assignedTo,
-        status: currentData.status
+      // Merge existing generated fields with new ones
+      const mergedGeneratedFields = {
+        ...(currentData.generatedFields || {}),
+        ...allGeneratedContent
       };
 
       // Update Firestore
-      await updateDoc(requestRef, updateData);
-
-      // Reset modified state
-      setModifiedFields(new Set());
-      setHasUnsavedChanges(false);
-
-      // Add activity log
-      const activityRef = collection(requestRef, 'activities');
-      await addDoc(activityRef, {
-        type: 'form_update',
-        description: `Form updated and transferred from ${request.currentEditor} to ${request.currentEditor === 'analyst' ? 'requester' : 'analyst'}`,
-        timestamp: serverTimestamp(),
-        userId: user.uid,
-        userName: profile.namaLengkap,
-        userRole: profile.role
+      await updateDoc(requestRef, {
+        formData: formData,
+        generatedFields: mergedGeneratedFields,
+        currentEditor: currentEditor === 'analyst' ? 'requester' : 'analyst',
+        lastSavedBy: {
+          uid: user?.uid || null,
+          name: profile?.namaLengkap || null,
+          role: profile?.role || null,
+          timestamp: serverTimestamp()
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid || null,
+        updatedByName: profile?.namaLengkap || null
       });
 
-      toast.success('Perubahan berhasil disimpan. Sekarang giliran ' + 
-        (request.currentEditor === 'analyst' ? 'Requester' : 'analyst') + '.');
+      // Reset states
+      setHasUnsavedChanges(false);
+      setModifiedFields(new Set());
+      setCurrentEditor(currentEditor === 'analyst' ? 'requester' : 'analyst');
+
+      // Show success message
+      const nextEditor = currentEditor === 'analyst' ? 'Requester' : 'Business Analyst';
+      toast.success(`Dokumen berhasil diserahkan ke ${nextEditor}.`);
+
+      // Add activity log
+      const activityLogRef = collection(db, 'brd_requests', requestId, 'activityLogs');
+      await addDoc(activityLogRef, {
+        type: 'TURN_CHANGE',
+        fromEditor: currentEditor,
+        toEditor: currentEditor === 'analyst' ? 'requester' : 'analyst',
+        timestamp: serverTimestamp(),
+        performedBy: user?.uid || null,
+        performedByName: profile?.namaLengkap || null,
+        performedByRole: profile?.role || null,
+        details: {
+          hasGeneratedContent: Object.keys(allGeneratedContent).length > 0
+        }
+      });
+
     } catch (error) {
       console.error('Error saving form:', error);
-      toast.error('Gagal menyimpan perubahan: ' + error.message);
+      toast.error('Gagal menyerahkan dokumen. Silakan coba lagi.');
     } finally {
       setIsSaving(false);
     }
   };
 
+  // Update handleRefreshForm to load generated content
   const handleRefreshForm = async () => {
     try {
       const requestDoc = await getDoc(doc(db, 'brd_requests', requestId));
@@ -1660,13 +1700,31 @@ HAL PENTING:
         throw new Error('Request not found');
       }
       const requestData = requestDoc.data();
+      
+      // Update form data
       setFormData(requestData.formData || {});
+    
+      // Load generated content
+      if (requestData.generatedFields) {
+        const loadedGeneratedFields = {};
+        Object.values(requestData.generatedFields).forEach(section => {
+          Object.entries(section).forEach(([fieldName, fieldData]) => {
+            // Store both content and original input
+            loadedGeneratedFields[fieldName] = {
+              content: fieldData.content,
+              originalInput: fieldData.originalInput || requestData.formData?.[fieldName] || ''
+            };
+          });
+        });
+        setGeneratedFields(loadedGeneratedFields);
+      }
+
       setModifiedFields(new Set());
       setHasUnsavedChanges(false);
-      toast.success('Form refreshed successfully');
+      toast.success('Form dan hasil generate berhasil diperbarui');
     } catch (error) {
       console.error('Error refreshing form:', error);
-      toast.error('Failed to refresh form');
+      toast.error('Gagal memperbarui form dan hasil generate');
     }
   };
 
@@ -2250,6 +2308,711 @@ HAL PENTING:
     printWindow.document.close();
   };
 
+  // Add generateContent function before handleGenerateField
+  const generateContent = async (field, formData) => {
+    try {
+      // Check if API key exists
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('Gemini API key is missing. Please check your environment variables.');
+      }
+
+      // Create a simple prompt that just processes the input
+      const promptContent = `Anda adalah Business Analyst di Bank Jateng.
+Input: ${formData[field.name] || 'Belum ada input'}
+Field: ${field.label}
+
+Tugas: Berikan output berupa kalimat sederhana yang menjelaskan nilai dari field ${field.label} adalah ${formData[field.name] || 'belum diisi'}.
+
+Format Output:
+[Satu kalimat yang menjelaskan nilai field]`;
+
+      // Call Gemini API with simplified parameters
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: promptContent
+              }]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 100,
+              topK: 1,
+              topP: 0.1
+            }
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Gemini API Error Response:', errorText);
+          throw new Error(`Gemini API Error (${response.status}): ${errorText}`);
+        }
+
+        const data = await response.json();
+        if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+          throw new Error('Format response tidak valid dari Gemini API');
+        }
+
+        const generatedText = data.candidates[0].content.parts[0].text;
+        console.log('Generated Text:', generatedText);
+
+        return generatedText;
+
+      } catch (apiError) {
+        console.error('Gemini API Call Error:', apiError);
+        throw new Error(`Error calling Gemini API: ${apiError.message}`);
+      }
+    } catch (error) {
+      console.error('Error in generateContent:', error);
+      // Provide more specific error message to the user
+      if (error.message.includes('API key is missing')) {
+        throw new Error('Konfigurasi API key belum lengkap. Silakan hubungi administrator.');
+      } else if (error.message.includes('429')) {
+        throw new Error('Terlalu banyak permintaan. Silakan coba lagi dalam beberapa saat.');
+      } else if (error.message.includes('403')) {
+        throw new Error('Akses ke API ditolak. Silakan periksa konfigurasi API key.');
+      } else {
+        throw new Error(`Gagal generate konten: ${error.message}`);
+      }
+    }
+  };
+
+  const handleGenerateField = async (section, field) => {
+    try {
+      setGeneratingField(field.name);
+      
+      // Log the input data
+      console.log('Generating for field:', field.name);
+      console.log('Section:', section.title);
+      console.log('Current form data:', formData[field.name]);
+
+      const response = await generateContent(field, formData);
+      
+      // Log the response
+      console.log('Generation response:', response);
+
+      if (response) {
+        // Create the field key consistently using both section and field identifiers
+        const fieldKey = `${section.title || section.id || ''}-${field.name || field.id || ''}`;
+        console.log('Generated fieldKey:', fieldKey);
+
+        // Update the generatedFields state with the new content
+        setGeneratedFields(prev => {
+          const newState = {
+            ...prev,
+            [fieldKey]: {
+              content: response,
+              originalInput: formData[field.name] || '',
+              timestamp: new Date().toISOString()
+            },
+            // Also store with just the field name for backward compatibility
+            [field.name]: {
+              content: response,
+              originalInput: formData[field.name] || '',
+              timestamp: new Date().toISOString()
+            }
+          };
+          console.log('New generatedFields state:', newState);
+          return newState;
+        });
+
+        // Save to generation history
+        await saveGenerationToHistory({
+          sectionId: section.title || section.id || '',
+          sectionTitle: section.title || '',
+          fieldId: field.name || field.id || '',
+          fieldLabel: field.label || field.name || '',
+          content: response,
+          originalInput: formData[field.name] || ''
+        });
+
+        toast.success('Konten berhasil digenerate');
+      }
+    } catch (error) {
+      console.error('Error generating field content:', error);
+      toast.error('Gagal generate konten');
+    } finally {
+      setGeneratingField(null);
+    }
+  };
+
+  // Add print styles
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @media print {
+        body * {
+          visibility: hidden;
+        }
+        .prose, .prose * {
+          visibility: visible;
+        }
+        .prose {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          padding: 2cm;
+        }
+        .prose h1 {
+          font-size: 24pt;
+          margin-bottom: 1cm;
+        }
+        .prose h2 {
+          font-size: 18pt;
+          margin-top: 1cm;
+          margin-bottom: 0.5cm;
+          page-break-after: avoid;
+        }
+        .prose h3 {
+          font-size: 14pt;
+          margin-top: 0.5cm;
+          margin-bottom: 0.3cm;
+          page-break-after: avoid;
+        }
+        .prose p {
+          font-size: 12pt;
+          margin-bottom: 0.3cm;
+        }
+        .prose strong {
+          font-weight: bold;
+        }
+        @page {
+          margin: 2cm;
+          size: A4;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+
+  // Add useEffect to load BRD data when component mounts or tab changes
+  useEffect(() => {
+    if (activeTab === 'preview' && requestId) {
+      const loadBRD = async () => {
+        try {
+          const requestRef = doc(db, 'brd_requests', requestId);
+          const requestDoc = await getDoc(requestRef);
+          if (requestDoc.exists() && requestDoc.data().consolidatedBRD) {
+            setBrdPreview(requestDoc.data().consolidatedBRD);
+          }
+        } catch (error) {
+          console.error('Error loading BRD:', error);
+          toast.error('Gagal memuat BRD');
+        }
+      };
+      loadBRD();
+    }
+  }, [activeTab, requestId]);
+
+  // Add new export function
+  const exportConsolidatedBRD = () => {
+    if (!request?.consolidatedBRD?.content) {
+      toast.error('Tidak ada BRD yang dapat diekspor');
+      return;
+    }
+
+    const preHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset='utf-8'>
+        <title>Business Requirements Document</title>
+        <style>
+          @page Section1 {
+            size: 21cm 29.7cm;
+            margin: 2.54cm 2.54cm 2.54cm 2.54cm;
+            mso-header-margin: 35.4pt;
+            mso-footer-margin: 35.4pt;
+            mso-paper-source: 0;
+          }
+          div.Section1 { page: Section1; }
+          body {
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 12pt;
+            line-height: 1.6;
+          }
+          .header {
+            text-align: center;
+            margin-bottom: 2cm;
+          }
+          .content {
+            text-align: justify;
+          }
+          h1 { font-size: 16pt; font-weight: bold; margin: 12pt 0; }
+          h2 { font-size: 14pt; font-weight: bold; margin: 10pt 0; }
+          h3 { font-size: 12pt; font-weight: bold; margin: 8pt 0; }
+          p { margin: 6pt 0; }
+          .metadata {
+            margin: 1cm 0;
+            font-size: 10pt;
+            color: #666;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="Section1">
+          <div class="header">
+            <img src="${bankLogo}" alt="Bank Logo" style="width: 150px; margin-bottom: 1cm;">
+            <h1>PT BANK PEMBANGUNAN DAERAH JAWA TENGAH</h1>
+            <h2>BUSINESS REQUIREMENTS DOCUMENT</h2>
+            <p>Nomor: ${request?.nomorSurat || ''}</p>
+            <p>Generated by: ${request.consolidatedBRD.generatedBy?.name || 'Unknown'}</p>
+            <p>Version: ${request.consolidatedBRD.version || 1}</p>
+          </div>
+          <div class="content">`;
+
+    const postHtml = `
+          </div>
+          <div class="metadata">
+            <p>Generated at: ${new Date().toLocaleString('id-ID')}</p>
+            <p>PT Bank Pembangunan Daerah Jawa Tengah © ${new Date().getFullYear()}</p>
+          </div>
+        </div>
+      </body>
+    </html>`;
+
+    // Convert markdown to HTML
+    const contentHtml = marked.parse(request.consolidatedBRD.content);
+    const html = preHtml + contentHtml + postHtml;
+
+    // Convert image to base64
+    const canvas = document.createElement('canvas');
+    const img = new Image();
+    img.src = bankLogo;
+    
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      
+      const base64Logo = canvas.toDataURL('image/png');
+      const finalHtml = html.replace(bankLogo, base64Logo);
+      
+      const blob = new Blob(['\ufeff', finalHtml], {
+        type: 'application/msword'
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `BRD_${request?.nomorSurat || 'Document'}_v${request.consolidatedBRD.version || 1}.doc`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success('BRD berhasil diekspor ke Word');
+    };
+  };
+
+  // Add new print function
+  const printConsolidatedBRD = () => {
+    if (!request?.consolidatedBRD?.content) {
+      toast.error('Tidak ada BRD yang dapat dicetak');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Business Requirements Document</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 2.54cm;
+            }
+            body {
+              font-family: 'Times New Roman', Times, serif;
+              font-size: 12pt;
+              line-height: 1.6;
+              margin: 0;
+              padding: 0;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 2cm;
+            }
+            .logo {
+              width: 150px;
+              margin-bottom: 1cm;
+            }
+            .content {
+              text-align: justify;
+            }
+            h1 { font-size: 16pt; font-weight: bold; margin: 12pt 0; }
+            h2 { font-size: 14pt; font-weight: bold; margin: 10pt 0; }
+            h3 { font-size: 12pt; font-weight: bold; margin: 8pt 0; }
+            p { margin: 6pt 0; }
+            .metadata {
+              margin-top: 2cm;
+              padding-top: 1cm;
+              border-top: 1px solid #ccc;
+              font-size: 10pt;
+              color: #666;
+              text-align: center;
+            }
+            @media print {
+              body { padding: 0; }
+              button { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <img src="${bankLogo}" alt="Bank Logo" class="logo">
+            <h1>PT BANK PEMBANGUNAN DAERAH JAWA TENGAH</h1>
+            <h2>BUSINESS REQUIREMENTS DOCUMENT</h2>
+            <p>Nomor: ${request?.nomorSurat || ''}</p>
+            <p>Generated by: ${request.consolidatedBRD.generatedBy?.name || 'Unknown'}</p>
+            <p>Version: ${request.consolidatedBRD.version || 1}</p>
+          </div>
+          <div class="content">
+            ${marked.parse(request.consolidatedBRD.content)}
+          </div>
+          <div class="metadata">
+            <p>Generated at: ${new Date().toLocaleString('id-ID')}</p>
+            <p>PT Bank Pembangunan Daerah Jawa Tengah © ${new Date().getFullYear()}</p>
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
+  };
+
+  // Add function to fetch generation history
+  const fetchGenerationHistory = async (section, field) => {
+    try {
+      // Create consistent field key using section title and field name
+      const fieldKey = `${section.title}-${field.name}`;
+      setShowHistoryFor(fieldKey);
+      
+      // Check if we already have history loaded
+      if (generationHistory[fieldKey]) {
+        return;
+      }
+      
+      // Check if the request document exists
+      const requestDocRef = doc(db, 'brd_requests', requestId);
+      const requestDocSnap = await getDoc(requestDocRef);
+      
+      if (!requestDocSnap.exists()) {
+        console.log('Request document does not exist');
+        setGenerationHistory(prev => ({
+          ...prev,
+          [fieldKey]: []
+        }));
+        return;
+      }
+      
+      // Fetch history from Firestore
+      const historyRef = collection(db, 'brd_requests', requestId, 'generation_history');
+      const q = query(
+        historyRef, 
+        where('fieldKey', '==', fieldKey),
+        orderBy('timestamp', 'desc'),
+        limit(5)
+      );
+      
+      try {
+        const historySnap = await getDocs(q);
+        const history = [];
+        
+        historySnap.forEach(doc => {
+          history.push({
+            id: doc.id,
+            ...doc.data(),
+            timestamp: doc.data().timestamp?.toDate() || new Date()
+          });
+        });
+        
+        setGenerationHistory(prev => ({
+          ...prev,
+          [fieldKey]: history
+        }));
+      } catch (error) {
+        console.error('Error in query execution:', error);
+        setGenerationHistory(prev => ({
+          ...prev,
+          [fieldKey]: []
+        }));
+        
+        if (error.code === 'permission-denied') {
+          toast.error('Tidak memiliki izin untuk mengakses riwayat generasi');
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching generation history:', error);
+      toast.error('Gagal memuat riwayat generasi');
+    }
+  };
+
+  // Add function to save current generation to history
+  const saveGenerationToHistory = async (data) => {
+    try {
+      const {
+        sectionId,
+        sectionTitle,
+        fieldId,
+        fieldLabel,
+        content,
+        originalInput
+      } = data;
+
+      if (!sectionId || !fieldId) {
+        console.warn('Missing required fields for generation history:', { sectionId, fieldId });
+        return;
+      }
+
+      // Ensure all string fields have valid values
+      const sanitizedData = {
+        sectionId: String(sectionId),
+        sectionTitle: String(sectionTitle || ''),
+        fieldId: String(fieldId),
+        fieldLabel: String(fieldLabel || fieldId),
+        content: String(content || ''),
+        originalInput: String(originalInput || '')
+      };
+
+      const fieldKey = `${sanitizedData.sectionId}-${sanitizedData.fieldId}`;
+      
+      // Save to Firestore
+      try {
+        const historyRef = collection(db, 'brd_requests', requestId, 'generation_history');
+        await addDoc(historyRef, {
+          fieldKey,
+          ...sanitizedData,
+          timestamp: serverTimestamp(),
+          savedBy: {
+            uid: user?.uid || '',
+            name: profile?.namaLengkap || '',
+            role: profile?.role || ''
+          }
+        });
+        
+        // Update local history state
+        const newHistoryItem = {
+          id: 'temp-' + Date.now(),
+          fieldKey,
+          ...sanitizedData,
+          timestamp: new Date(),
+          savedBy: {
+            uid: user?.uid || '',
+            name: profile?.namaLengkap || '',
+            role: profile?.role || ''
+          }
+        };
+        
+        setGenerationHistory(prev => ({
+          ...prev,
+          [fieldKey]: [newHistoryItem, ...(prev[fieldKey] || [])]
+        }));
+        
+        toast.success('Hasil generasi berhasil disimpan');
+      } catch (error) {
+        console.error('Error saving to Firestore:', error);
+        
+        if (error.code === 'permission-denied') {
+          toast.error('Tidak memiliki izin untuk menyimpan riwayat generasi. Silakan hubungi administrator.');
+        } else {
+          toast.error('Gagal menyimpan ke database. Coba lagi nanti.');
+        }
+        
+        // Still update local state even if Firestore save fails
+        const newHistoryItem = {
+          id: 'local-' + Date.now(),
+          fieldKey,
+          ...sanitizedData,
+          timestamp: new Date(),
+          savedBy: {
+            uid: user?.uid || '',
+            name: profile?.namaLengkap || '',
+            role: profile?.role || ''
+          },
+          isLocalOnly: true
+        };
+        
+        setGenerationHistory(prev => ({
+          ...prev,
+          [fieldKey]: [newHistoryItem, ...(prev[fieldKey] || [])]
+        }));
+      }
+    } catch (error) {
+      console.error('Error saving generation to history:', error);
+      toast.error('Gagal menyimpan hasil generasi');
+    }
+  };
+
+  // Add function to use a previous generation
+  const usePreviousGeneration = (historyItem) => {
+    if (!historyItem) return;
+    
+    const { fieldKey, content } = historyItem;
+    
+    // Get the current input value for this field
+    const currentInputValue = formData[fieldKey] || '';
+    
+    // Update the generated fields state
+    setGeneratedFields(prev => {
+      // Check if we already have a structure for this field
+      const existingField = prev[fieldKey];
+      const originalInput = existingField && typeof existingField === 'object' 
+        ? existingField.originalInput || currentInputValue
+        : currentInputValue;
+        
+      return {
+        ...prev,
+        [fieldKey]: {
+          content,
+          originalInput,
+          metadata: {
+            ...(existingField && typeof existingField === 'object' ? existingField.metadata : {}),
+            usedFromHistory: true,
+            originalTimestamp: historyItem.timestamp
+          }
+        }
+      };
+    });
+    
+    // Save to cookies with the updated structure
+    saveGeneratedContentToCookies(fieldKey, {
+      content,
+      originalInput: formData[fieldKey] || '',
+      metadata: {
+        generatedBy: historyItem.savedBy,
+        usedFromHistory: true,
+        originalTimestamp: historyItem.timestamp
+      }
+    });
+    
+    setShowHistoryFor(null);
+    toast.success('Hasil generasi sebelumnya berhasil digunakan');
+  };
+
+  // Add function to save generated content to cookies
+  const saveGeneratedContentToCookies = (fieldKey, data) => {
+    try {
+      // Create a cookie name based on the request ID and field key
+      const cookieName = `generated_${requestId}_${fieldKey}`;
+      
+      // Add timestamp to the data
+      const dataWithTimestamp = {
+        ...data,
+        savedAt: new Date().toISOString()
+      };
+      
+      // Save to cookie with 7 days expiry
+      cookie.save(cookieName, dataWithTimestamp, {
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60, // 7 days
+        secure: true
+      });
+    } catch (error) {
+      console.error('Error saving to cookies:', error);
+      // Continue without error - cookies are non-critical
+    }
+  };
+
+  useEffect(() => {
+    const loadGeneratedContent = async () => {
+      try {
+        if (!requestId) return;
+        
+        const requestRef = doc(db, 'brd_requests', requestId);
+        const requestDoc = await getDoc(requestRef);
+        
+        if (requestDoc.exists()) {
+          const data = requestDoc.data();
+          
+          // Load generated fields if they exist
+          if (data.generatedFields) {
+            const loadedGeneratedFields = {};
+            
+            // Iterate through sections
+            Object.entries(data.generatedFields).forEach(([sectionTitle, sectionData]) => {
+              // Iterate through fields in each section
+              Object.entries(sectionData).forEach(([fieldName, fieldData]) => {
+                // Create consistent field key
+                const fieldKey = `${sectionTitle}-${fieldName}`;
+                
+                // Store with both the field key and the field name for backward compatibility
+                loadedGeneratedFields[fieldKey] = {
+                  content: fieldData.content,
+                  originalInput: fieldData.originalInput || '',
+                  timestamp: fieldData.generatedAt
+                };
+                
+                loadedGeneratedFields[fieldName] = {
+                  content: fieldData.content,
+                  originalInput: fieldData.originalInput || '',
+                  timestamp: fieldData.generatedAt
+                };
+              });
+            });
+            
+            console.log('Loaded generated fields:', loadedGeneratedFields);
+            setGeneratedFields(loadedGeneratedFields);
+          }
+
+          // Load consolidated BRD if it exists
+          if (data.consolidatedBRD) {
+            setGeneratedBRD(data.consolidatedBRD);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading generated content:', error);
+        if (error.code === 'permission-denied') {
+          toast.error('Anda tidak memiliki akses untuk melihat konten yang di-generate');
+        } else {
+          toast.error('Gagal memuat konten yang di-generate');
+        }
+      }
+    };
+
+    loadGeneratedContent();
+  }, [requestId]);
+
+  // Add this helper function at the top of the component
+  const getGeneratedContent = (section, field) => {
+    // Create the field key consistently
+    const fieldKey = `${section.title || section.id || ''}-${field.name || field.id || ''}`;
+    
+    // First try to get content directly from generatedFields using the fieldKey
+    if (generatedFields[fieldKey]?.content) {
+      return generatedFields[fieldKey].content;
+    }
+    
+    // If not found with fieldKey, try to get from section data
+    if (request?.generatedFields?.[section.title]?.[field.name]?.content) {
+      return request.generatedFields[section.title][field.name].content;
+    }
+    
+    // If still not found, try with just the field name
+    if (generatedFields[field.name]?.content) {
+      return generatedFields[field.name].content;
+    }
+    
+    // If no content is found, return empty string
+    return '';
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -2281,13 +3044,12 @@ HAL PENTING:
         position="top-right"
         autoClose={5000}
         hideProgressBar={false}
-        newestOnTop
+        newestOnTop={false}
         closeOnClick
         rtl={false}
         pauseOnFocusLoss
         draggable
         pauseOnHover
-        theme="light"
       />
       {/* Header */}
       <div className="bg-gradient-to-r from-white to-blue-50 rounded-2xl shadow-lg p-6 mb-6">
@@ -2332,7 +3094,7 @@ HAL PENTING:
           <div className="flex items-center space-x-4">
             {/* Complete Button */}
             {profile.role === 'Business Analyst' && 
-             (request?.status === 'Generated' || request?.status === 'In Progress') && 
+             (request?.status === 'Pembuatan Dokumen' || request?.status === 'Sedang Diproses') && 
              request?.currentEditor !== 'requester' && (
               <button
                 onClick={() => {
@@ -2417,7 +3179,7 @@ HAL PENTING:
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
               </svg>
-              <span>Buat BRD</span>
+              <span>Buat DraftBRD</span>
             </button>
             {request?.generatedContent && (
               <button
@@ -2686,12 +3448,20 @@ HAL PENTING:
                             <p className="mt-1">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
                                 ${request?.status === 'New' ? 'bg-blue-100 text-blue-800' :
-                                request?.status === 'Generated' ? 'bg-green-100 text-green-800' :
-                                request?.status === 'In Review' ? 'bg-yellow-100 text-yellow-800' :
-                                request?.status === 'Approved' ? 'bg-green-100 text-green-800' :
-                                request?.status === 'Rejected' ? 'bg-red-100 text-red-800' :
+                                request?.status === 'Pending Review' ? 'bg-amber-100 text-amber-800' :
+                                request?.status === 'Sedang Diproses' ? 'bg-indigo-100 text-indigo-800' :
+                                request?.status === 'Pembuatan Dokumen' ? 'bg-emerald-100 text-emerald-800' :
+                                request?.status === 'Selesai' ? 'bg-green-100 text-green-800' :
                                 'bg-gray-100 text-gray-800'}`}>
-                                {request?.status}
+                                {request?.status === 'New' ? 'Baru' :
+                                 request?.status === 'Pending Review' ? 'Menunggu Review' :
+                                 request?.status === 'Sedang Diproses' ? 'Sedang Diproses' :
+                                 request?.status === 'Pembuatan Dokumen' ? 'Pembuatan Dokumen' :
+                                 request?.status === 'Selesai' ? 'Selesai' :
+                                 request?.status === 'In Review' ? 'Dalam Review' :
+                                 request?.status === 'Approved' ? 'Disetujui' :
+                                 request?.status === 'Rejected' ? 'Ditolak' :
+                                 request?.status || 'Baru'}
                               </span>
                             </p>
                           </div>
@@ -2977,9 +3747,9 @@ HAL PENTING:
                             </button>
                             <button
                               onClick={handleSaveForm}
-                              disabled={isSaving || !hasUnsavedChanges}
+                              disabled={isSaving} // Remove the hasUnsavedChanges check
                               className={`inline-flex items-center px-6 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white transition-all duration-200
-                                ${isSaving || !hasUnsavedChanges 
+                                ${isSaving 
                                   ? 'bg-gray-400 cursor-not-allowed' 
                                   : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'}`}
                             >
@@ -3029,7 +3799,8 @@ HAL PENTING:
                             <div className="p-6">
                               <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
                               {section.fieldConfigs?.map((field) => (
-                                  <div key={field.name} className="relative group">
+                                <div key={field.name} className="relative group space-y-4">
+                                  <div>
                                     <label htmlFor={field.name} className="block text-sm font-medium text-gray-700 mb-1">
                                     {field.label} {field.required && <span className="text-red-500">*</span>}
                                   </label>
@@ -3181,9 +3952,170 @@ HAL PENTING:
                                         </div>
                                     )}
                                   </div>
+                                  </div>
+
                                   {field.description && (
                                     <p className="mt-1 text-sm text-gray-500">{field.description}</p>
                                   )}
+
+                                  {/* Generate by AI button and results */}
+                                  <div className="space-y-2">
+                                    <div className="flex space-x-2">
+                                      <button
+                                        onClick={() => handleGenerateField(section, field)}
+                                        disabled={generatingField === field.name || !canEdit()}
+                                        className={`inline-flex items-center px-3 py-1 rounded-md text-xs font-medium ${
+                                          generatingField === field.name || !canEdit()
+                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                        }`}
+                                      >
+                                        {generatingField === field.name ? (
+                                          <span className="flex items-center">
+                                            <svg className="animate-spin -ml-1 mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24">
+                                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            Generating...
+                                          </span>
+                                        ) : (
+                                          'Generate by AI'
+                                        )}
+                                      </button>
+                                      
+                                      {/* Generated Sebelumnya button */}
+                                      <button
+                                        onClick={() => fetchGenerationHistory(section, field)}
+                                        disabled={generatingField === field.name || !canEdit()}
+                                        className={`inline-flex items-center px-3 py-1 rounded-md text-xs font-medium ${
+                                          generatingField === field.name || !canEdit()
+                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                                        }`}
+                                      >
+                                        <svg className="-ml-0.5 mr-1 h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
+                                        </svg>
+                                        Generated Sebelumnya
+                                      </button>
+                                      
+                                      {/* Save button */}
+                                      {generatedFields[`${section.id}-${field.id}`] && (
+                                        <button
+                                          onClick={() => saveGenerationToHistory({
+                                            sectionId: section.id,
+                                            sectionTitle: section.title,
+                                            fieldId: field.id,
+                                            fieldLabel: field.label,
+                                            content: generatedFields[`${section.id}-${field.id}`].content,
+                                            originalInput: generatedFields[`${section.id}-${field.id}`].originalInput
+                                          })}
+                                          disabled={
+                                            (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
+                                            (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
+                                          }
+                                          className={`inline-flex items-center px-3 py-1 rounded-md text-xs font-medium ${
+                                            (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
+                                            (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
+                                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                              : 'bg-green-50 text-green-700 hover:bg-green-100'
+                                          }`}
+                                          title={
+                                            (request?.currentEditor === 'analyst' && profile.role !== 'Business Analyst') ||
+                                            (request?.currentEditor === 'requester' && profile.role === 'Business Analyst')
+                                              ? "Anda tidak dapat menyimpan saat bukan giliran Anda"
+                                              : ""
+                                          }
+                                        >
+                                          <svg className="-ml-0.5 mr-1 h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                                          </svg>
+                                          Save
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* History dropdown */}
+                                    {showHistoryFor === `${section.title}-${field.name}` && generationHistory[`${section.title}-${field.name}`] && (
+                                      <div className="mt-2 border border-gray-200 rounded-md p-2 bg-gray-50">
+                                        <div className="flex justify-between items-center mb-2">
+                                          <h6 className="text-xs font-medium text-gray-700">Riwayat Generasi</h6>
+                                          <button
+                                            onClick={() => setShowHistoryFor(null)}
+                                            className="text-gray-400 hover:text-gray-500"
+                                          >
+                                            <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                        
+                                        {generationHistory[`${section.title}-${field.name}`].length === 0 ? (
+                                          <p className="text-xs text-gray-500">Tidak ada riwayat generasi</p>
+                                        ) : (
+                                          <div className="space-y-2 max-h-40 overflow-y-auto">
+                                            {generationHistory[`${section.title}-${field.name}`].map((item) => (
+                                              <div key={item.id} className="border border-gray-200 rounded p-2 bg-white">
+                                                <div className="flex justify-between items-start mb-1">
+                                                  <span className="text-xs text-gray-500">
+                                                    {new Date(item.timestamp).toLocaleString('id-ID')}
+                                                  </span>
+                                                  <button
+                                                    onClick={() => usePreviousGeneration(item)}
+                                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                                  >
+                                                    Gunakan
+                                                  </button>
+                                                </div>
+                                                <div className="text-xs text-gray-700 line-clamp-2">
+                                                  {item.content.substring(0, 100)}...
+                                                </div>
+                                </div>
+                              ))}
+                              </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Generated content - Always visible */}
+                                    <div className="mt-2 bg-white rounded-lg border border-gray-200 p-3">
+                                      <h6 className="text-xs font-medium text-gray-700 mb-2">Hasil Generate:</h6>
+                                      <div className="space-y-3">
+                                        {/* Display original input */}
+                                        <div className="bg-gray-50 p-2.5 rounded-md">
+                                          <span className="block text-sm font-medium text-gray-600 mb-1">Input Awal:</span>
+                                          <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                                            {formData[field.name] || 'Belum ada input'}
+                                          </div>
+                                        </div>
+                                        
+                                        {/* Display generated content */}
+                                        <div className="bg-blue-50 p-2.5 rounded-md">
+                                          <span className="block text-sm font-medium text-gray-600 mb-1">Hasil Generate:</span>
+                                          <div className="text-sm text-gray-900 whitespace-pre-wrap">
+                                            {(() => {
+                                              const content = getGeneratedContent(section, field);
+                                              console.log('Displaying content for:', {
+                                                sectionTitle: section.title,
+                                                fieldName: field.name,
+                                                fieldKey: `${section.title}-${field.name}`,
+                                                content,
+                                                generatedFields: generatedFields
+                                              });
+                                              return content || 'Belum ada hasil generate. Klik tombol "Generate by AI" untuk membuat konten.';
+                                            })()}
+                                          </div>
+                                        </div>
+
+                                        {/* Generation metadata if available */}
+                                        {generatedFields[`${section.title}-${field.name}`]?.timestamp && (
+                                          <div className="text-xs text-gray-500 mt-1">
+                                            Terakhir di-generate: {new Date(generatedFields[`${section.title}-${field.name}`].timestamp).toLocaleString('id-ID')}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                               </div>
@@ -3249,7 +4181,7 @@ HAL PENTING:
                               <svg className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                               </svg>
-                              Buat BRD
+                              Jadikan Dokumen BRD
                             </>
                           )}
                         </button>
@@ -3262,218 +4194,131 @@ HAL PENTING:
           )}
 
           {activeTab === 'view' && (
-            <div className="space-y-8">
-                  {/* Document Header */}
-              <div className="px-8 py-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-white">
+            <div className="bg-white shadow sm:rounded-lg">
+              {request?.consolidatedBRD?.content ? (
+                <div>
+                  {/* Header Section */}
+                  <div className="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-white">
                     <div className="flex justify-between items-start">
                       <div>
-                        <h1 className="text-2xl font-bold text-gray-900">Business Requirements Document</h1>
-                        <p className="mt-2 text-sm text-gray-500">Template: {selectedTemplate?.name || request?.templateName}</p>
-                      </div>
-                      {profile?.role === 'Business Analyst' ? (
                         <div className="flex items-center space-x-3">
+                          <div className="flex items-center justify-center h-10 w-10 rounded-lg bg-blue-100 text-blue-600">
+                            <span className="text-lg font-semibold">BRD</span>
+                          </div>
+                          <div>
+                            <h2 className="text-xl font-bold text-gray-900">Business Requirements Document</h2>
+                            <p className="text-sm text-gray-500 mt-1">
+                              Generated by: {request.consolidatedBRD.generatedBy?.name || 'Unknown'} ({request.consolidatedBRD.generatedBy?.role || 'Unknown'})
+                              <br />
+                              Version: {request.consolidatedBRD.version || 1}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                          {profile.role === 'Business Analyst' && (
+                            <>
                           <button
-                            onClick={exportToWord}
-                            className="inline-flex items-center px-4 py-2.5 border border-blue-600 rounded-lg shadow-sm text-sm font-medium text-blue-600 bg-white hover:bg-blue-50 hover:shadow transition-all duration-200 group"
+                              onClick={printConsolidatedBRD}
+                              className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                           >
-                            <svg className="h-5 w-5 mr-2 text-blue-500 group-hover:text-blue-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a2 2 0 002 2h6a2 2 0 002-2v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" />
                             </svg>
-                            Ekspor ke Word
+                              Print BRD
                           </button>
                           <button
-                            onClick={handlePrintBRD}
-                            className="inline-flex items-center px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 hover:shadow transition-all duration-200 group"
+                              onClick={exportConsolidatedBRD}
+                              className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                           >
-                            <svg className="h-5 w-5 mr-2 text-gray-400 group-hover:text-gray-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
                             </svg>
-                            Cetak Dokumen
+                              Export to Word
                           </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center space-x-2 text-sm text-gray-500">
-                          <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span>Hanya Business Analyst yang dapat mengekspor dan mencetak dokumen</span>
-                        </div>
-                      )}
-                      <img src={bankLogo} alt="Bank Logo" className="h-12" />
-                    </div>
-                  </div>
-
-              {/* Document Info */}
-              <div className="px-8 py-6 border-b border-gray-200 bg-gray-50">
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Nomor Dokumen</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">{request?.nomorSurat || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Tanggal Dibuat</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">
-                      {request?.createdAt ? new Date(request.createdAt.seconds * 1000).toLocaleDateString('id-ID', {
-                        weekday: 'long',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      }) : '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Unit Bisnis</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">{request?.unitBisnis || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Aplikasi</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">{request?.aplikasiDikembangkan || '-'}</p>
+                            </>
+                          )}
                   </div>
                 </div>
               </div>
 
-              {/* Generated Content */}
+                  {/* Content Section */}
                   <div className="px-8 py-6">
-                    <div className="space-y-8">
-                  {console.log('Request:', request)}
-                  {console.log('Generated Content:', request?.generatedContent)}
-                  {request?.generatedContent?.info_project ? (
-                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                      <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-white border-b border-gray-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <div className="flex items-center justify-center h-10 w-10 rounded-lg bg-blue-100 text-blue-600">
-                              <span className="text-lg font-semibold">I</span>
-                            </div>
-                            <div>
-                              <h2 className="text-xl font-bold text-gray-900">Informasi Proyek</h2>
-                              <p className="text-sm text-gray-500 mt-1">Generated Business Requirements Document</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="p-6">
                         <div className="prose prose-blue max-w-none">
-                          {request.generatedContent.info_project.split('\n').map((line, i) => {
+                      {request.consolidatedBRD.content.split('\n').map((line, i) => {
                             if (!line.trim()) return null;
 
-                            // Section Title (e.g., "1. Introduction")
-                            if (line.match(/^\d+\.\s+[A-Z]/)) {
+                        // Section Title (e.g., "## Introduction")
+                        if (line.match(/^##\s+/)) {
                         return (
                                 <div key={i} className="mt-8 first:mt-0">
                                   <h2 className="text-2xl font-bold text-gray-900 mb-4 pb-2 border-b border-gray-200">
-                                    {line}
+                                {line.replace(/^##\s+/, '')}
                             </h2>
                                 </div>
                               );
                             }
                             
-                            // Subsection Title (e.g., "1.1. Background")
-                            if (line.match(/^\d+\.\d+\.\s+[A-Z]/)) {
+                        // Subsection Title (e.g., "### Background")
+                        if (line.match(/^###\s+/)) {
                               return (
                                 <h3 key={i} className="text-xl font-semibold text-gray-800 mt-6 mb-3">
-                                  {line}
+                              {line.replace(/^###\s+/, '')}
                                 </h3>
-                              );
-                            }
-
-                            // Sub-subsection Title (e.g., "1.1.1. Context")
-                            if (line.match(/^\d+\.\d+\.\d+\.\s+[A-Z]/)) {
-                              return (
-                                <h4 key={i} className="text-lg font-medium text-gray-800 mt-4 mb-2">
-                                  {line}
-                                </h4>
-                              );
-                            }
-
-                            // Reference Block
-                            if (line.toLowerCase().includes('referensi')) {
-                              return (
-                                <div key={i} className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg my-4">
-                                  <p className="text-sm text-blue-700 font-medium">{line}</p>
-                            </div>
-                              );
-                            }
-
-                            // Analysis Block
-                            if (line.toLowerCase().includes('analisis')) {
-                              return (
-                                <div key={i} className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded-r-lg my-4">
-                                  <p className="text-sm text-indigo-700 font-medium">{line}</p>
-                          </div>
-                              );
-                            }
-
-                            // Bullet Points
-                            if (line.startsWith('-')) {
-                              return (
-                                <div key={i} className="flex items-start space-x-2 my-1 ml-4">
-                                  <div className="mt-1.5">
-                                    <div className="h-1.5 w-1.5 rounded-full bg-gray-500"></div>
-                                  </div>
-                                  <p className="text-gray-700 flex-1">{line.substring(1).trim()}</p>
-                                </div>
-                              );
-                            }
-
-                            // Alphabetical Points
-                            if (line.match(/^[a-z]\./i)) {
-                              return (
-                                <div key={i} className="flex items-start space-x-3 my-2 ml-6">
-                                  <span className="text-gray-500 font-medium">{line.split('.')[0]}.</span>
-                                  <p className="text-gray-700 flex-1">{line.substring(2).trim()}</p>
-                                </div>
                               );
                             }
 
                             // Regular Paragraph
                             return (
                               <p key={i} className="text-gray-700 my-3 text-justify leading-relaxed">
-                                {line}
+                                {line.split(/(\*\*[^*]+\*\*)/).map((part, index) => {
+                                  if (part.startsWith('**') && part.endsWith('**')) {
+                                    return <strong key={index}>{part.slice(2, -2)}</strong>;
+                                  }
+                                  return part;
+                                })}
                               </p>
                         );
                       })}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-12 bg-white rounded-lg border-2 border-dashed border-gray-300">
-                      <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <h3 className="mt-2 text-sm font-medium text-gray-900">Belum Ada BRD</h3>
-                      <p className="mt-1 text-sm text-gray-500">Silakan generate BRD terlebih dahulu untuk melihat hasilnya di sini.</p>
-                    </div>
-                  )}
                     </div>
                   </div>
 
-                  {/* Document Footer */}
-                  <div className="px-8 py-6 bg-gray-50 border-t border-gray-200">
-                <div className="grid grid-cols-3 gap-6">
+                  {/* Footer Section */}
+                  <div className="px-8 py-4 bg-gray-50 border-t border-gray-200">
+                    <div className="flex justify-between items-center text-sm text-gray-500">
+                      <div className="flex space-x-6">
                       <div>
-                    <p className="text-sm font-medium text-gray-500">Dibuat oleh</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">{request?.createdByName}</p>
-                    <p className="text-sm text-gray-500">{request?.createdByRole || profile?.role}</p>
+                          <span className="font-medium text-gray-900">Generated by:</span>{' '}
+                          {request.consolidatedBRD.generatedBy?.name || 'Unknown'}
                       </div>
                       <div>
-                    <p className="text-sm font-medium text-gray-500">Business Analyst</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">{request?.assignedAnalystName || '-'}</p>
-                    <p className="text-sm text-gray-500">Business Analyst</p>
+                          <span className="font-medium text-gray-900">Version:</span>{' '}
+                          {request.consolidatedBRD.version || 1}
+                        </div>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-gray-500">Status Dokumen</p>
-                    <p className="mt-1 text-base font-medium text-gray-900">{request?.status}</p>
-                    <p className="text-sm text-gray-500">
-                      Last updated: {request?.updatedAt ? new Date(request.updatedAt.seconds * 1000).toLocaleDateString('id-ID', {
+                        <span className="font-medium text-gray-900">Last updated:</span>{' '}
+                        {new Date(request.consolidatedBRD.updatedAt).toLocaleString('id-ID', {
+                          weekday: 'long',
                         year: 'numeric',
                           month: 'long',
-                        day: 'numeric'
-                      }) : '-'}
-                        </p>
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
                       </div>
                       </div>
                     </div>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No BRD Generated</h3>
+                  <p className="mt-1 text-sm text-gray-500">Generate the BRD first to preview it here.</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -3665,6 +4510,183 @@ HAL PENTING:
                 Hapus
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replace the existing BRD generation button with this new section */}
+      {activeTab === 'isi_brd' && selectedTemplate && (
+        <div className="mt-6 space-y-8">
+          <div className="bg-blue-50 p-4 rounded-md">
+            <h3 className="text-lg font-semibold text-blue-900">Generate BRD Per Bagian</h3>
+            <p className="text-sm text-blue-700 mt-1">
+              Generate setiap bagian BRD satu per satu. Anda dapat menyetujui atau menanyakan setiap bagian yang telah di-generate.
+            </p>
+          </div>
+
+          {selectedTemplate?.structure?.sections.map((section, index) => (
+            <div key={section.title} className="bg-white rounded-lg shadow-sm border p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-lg font-medium text-gray-900">
+                  {section.number}. {section.title}
+                </h4>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleGenerateSection(section, index)}
+                    disabled={generatingSection === section.title}
+                    className={`px-4 py-2 rounded-md text-sm font-medium ${
+                      generatingSection === section.title
+                        ? 'bg-gray-100 text-gray-400'
+                        : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    }`}
+                  >
+                    {generatingSection === section.title ? (
+                      <span className="flex items-center">
+                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Generating...
+                      </span>
+                    ) : (
+                      'Generate Bagian Ini'
+                    )}
+                  </button>
+                  
+                  {generatedSections[section.title] && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleSectionApproval(section, true)}
+                        className={`px-3 py-1 rounded-md text-sm font-medium ${
+                          sectionStatus[section.title] === 'approved'
+                            ? 'bg-green-600 text-white'
+                            : 'bg-green-50 text-green-700 hover:bg-green-100'
+                        }`}
+                      >
+                        Setujui
+                      </button>
+                      <button
+                        onClick={() => handleSectionApproval(section, false)}
+                        className={`px-3 py-1 rounded-md text-sm font-medium ${
+                          sectionStatus[section.title] === 'questioned'
+                            ? 'bg-yellow-600 text-white'
+                            : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                        }`}
+                      >
+                        Tanyakan
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Section fields */}
+              <div className="space-y-4 mb-4">
+                {section.fieldConfigs?.map(field => (
+                  <div key={field.name} className="border rounded-lg p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        {field.label}
+                      </label>
+                      <button
+                        onClick={() => handleGenerateField(section, field)}
+                        disabled={generatingField === field.name || !canEdit()}
+                        className={`px-3 py-1 rounded-md text-xs font-medium ${
+                          generatingField === field.name || !canEdit()
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        }`}
+                      >
+                        {generatingField === field.name ? (
+                          <span className="flex items-center">
+                            <svg className="animate-spin -ml-1 mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Generating...
+                          </span>
+                        ) : (
+                          'Generate by AI'
+                        )}
+                      </button>
+                    </div>
+                    
+                    <div className="text-sm text-gray-900 mb-2">
+                      <span className="text-gray-500">Input Value:</span>
+                      <div className="mt-1 p-2 bg-gray-50 rounded">
+                        {formData[field.name] || 'Belum diisi'}
+                      </div>
+                    </div>
+
+                    {/* Show generated content for this field if available */}
+                    {generatedFields[field.name] && (
+                      <div className="mt-3">
+                        <h6 className="text-xs font-medium text-gray-500 mb-1">Hasil Generate:</h6>
+                        <div className="space-y-2">
+                          {/* Display original input */}
+                          <div className="bg-gray-50 p-2 rounded-md text-sm text-gray-700 whitespace-pre-wrap">
+                            <span className="font-medium">Input Awal:</span> 
+                            {typeof generatedFields[field.name] === 'object' 
+                              ? generatedFields[field.name].originalInput || 'Tidak ada input'
+                              : formData[field.name] || 'Tidak ada input'}
+                          </div>
+                          {/* Display generated content */}
+                          <div className="bg-blue-50 p-2 rounded-md text-sm text-gray-900 whitespace-pre-wrap">
+                            <span className="font-medium">Hasil Generate:</span>
+                            <div className="mt-1">
+                              {getGeneratedContent(section, field)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Generated content */}
+              {generatedSections[section.title] && (
+                <div className="mt-4">
+                  <h5 className="text-sm font-medium text-gray-700 mb-2">Hasil Generate:</h5>
+                  <div className="bg-gray-50 p-3 rounded-md text-sm text-gray-900 whitespace-pre-wrap">
+                    {generatedSections[section.title]}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Control buttons */}
+          <div className="flex justify-between items-center pt-6 border-t">
+            <button
+              onClick={handleGenerateBRD}
+              disabled={generating || Object.keys(generatedSections).length === 0}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {generating ? 'Menyimpan...' : 'Simpan Semua & Selesai'}
+            </button>
+
+            <button
+              onClick={() => {
+                const newEditor = request?.currentEditor === 'analyst' ? 'requester' : 'analyst';
+                const requestRef = doc(db, 'brd_requests', requestId);
+                updateDoc(requestRef, {
+                  currentEditor: newEditor,
+                  updatedAt: serverTimestamp()
+                }).then(() => {
+                  setCurrentEditor(newEditor);
+                  setRequest(prev => ({
+                    ...prev,
+                    currentEditor: newEditor
+                  }));
+                  toast.success(`Berhasil diserahkan ke ${newEditor === 'analyst' ? 'Business Analyst' : 'Requester'}`);
+                });
+              }}
+              disabled={!Object.values(sectionStatus).some(status => status === 'approved' || status === 'questioned')}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Serahkan ke {request?.currentEditor === 'analyst' ? 'Requester' : 'Business Analyst'}
+            </button>
           </div>
         </div>
       )}

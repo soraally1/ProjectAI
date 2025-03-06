@@ -79,10 +79,13 @@ const BusinessAnalystPage = () => {
       case 'Pending Review':
         return 'bg-yellow-100 text-yellow-800';
       case 'In Progress':
+      case 'Sedang Diproses':
         return 'bg-blue-100 text-blue-800';
       case 'Already Generated':
+      case 'Pembuatan Dokumen':
         return 'bg-emerald-100 text-emerald-800';
       case 'Completed':
+      case 'Selesai':
         return 'bg-green-100 text-green-800';
       case 'Rejected':
         return 'bg-red-100 text-red-800';
@@ -93,7 +96,17 @@ const BusinessAnalystPage = () => {
 
   const filteredRequests = selectedStatus === 'all' 
     ? requests 
-    : requests.filter(request => request.status === selectedStatus);
+    : requests.filter(request => {
+        if (selectedStatus === 'In Progress') {
+          return request.status === 'In Progress' || request.status === 'Sedang Diproses';
+        } else if (selectedStatus === 'Already Generated') {
+          return request.status === 'Already Generated' || request.status === 'Pembuatan Dokumen';
+        } else if (selectedStatus === 'Completed') {
+          return request.status === 'Completed' || request.status === 'Selesai';
+        } else {
+          return request.status === selectedStatus;
+        }
+      });
 
   const StatCard = ({ title, value, icon, color }) => (
     <div className="bg-white rounded-xl shadow-md p-6 flex items-center space-x-4">
@@ -169,11 +182,11 @@ const BusinessAnalystPage = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'In Progress').length}</span>
+            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'In Progress' || r.status === 'Sedang Diproses').length}</span>
           </div>
           <p className="mt-4 text-sm font-medium text-gray-600">Sedang Dikerjakan</p>
           <div className="mt-2 h-1 w-full bg-indigo-100 rounded-full overflow-hidden">
-            <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'In Progress').length / requests.length) * 100}%` }}></div>
+            <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'In Progress' || r.status === 'Sedang Diproses').length / requests.length) * 100}%` }}></div>
           </div>
         </div>
 
@@ -184,11 +197,11 @@ const BusinessAnalystPage = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'Completed').length}</span>
+            <span className="text-3xl font-bold text-gray-900">{requests.filter(r => r.status === 'Completed' || r.status === 'Selesai').length}</span>
           </div>
           <p className="mt-4 text-sm font-medium text-gray-600">Selesai</p>
           <div className="mt-2 h-1 w-full bg-green-100 rounded-full overflow-hidden">
-            <div className="h-full bg-green-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'Completed').length / requests.length) * 100}%` }}></div>
+            <div className="h-full bg-green-600 rounded-full" style={{ width: `${(requests.filter(r => r.status === 'Completed' || r.status === 'Selesai').length / requests.length) * 100}%` }}></div>
           </div>
         </div>
       </div>
@@ -203,6 +216,7 @@ const BusinessAnalystPage = () => {
           <option value="all">Semua Permintaan</option>
           <option value="Pending Review">Menunggu Review</option>
           <option value="In Progress">Sedang Dikerjakan</option>
+          <option value="Already Generated">Sudah Dibuat</option>
           <option value="Completed">Selesai</option>
           <option value="Rejected">Ditolak</option>
         </select>
@@ -311,17 +325,17 @@ const BusinessAnalystPage = () => {
                         disabled={updating === request.id}
                         className={`block w-full rounded-xl shadow-sm text-sm transition-all duration-200
                           ${request.status === 'Pending Review' ? 'bg-yellow-50 border-yellow-300 text-yellow-800' :
-                            request.status === 'In Progress' ? 'bg-blue-50 border-blue-300 text-blue-800' :
-                            request.status === 'Already Generated' ? 'bg-emerald-50 border-emerald-300 text-emerald-800' :
-                            request.status === 'Completed' ? 'bg-green-50 border-green-300 text-green-800' :
+                            request.status === 'In Progress' || request.status === 'Sedang Diproses' ? 'bg-blue-50 border-blue-300 text-blue-800' :
+                            request.status === 'Already Generated' || request.status === 'Pembuatan Dokumen' ? 'bg-emerald-50 border-emerald-300 text-emerald-800' :
+                            request.status === 'Completed' || request.status === 'Selesai' ? 'bg-green-50 border-green-300 text-green-800' :
                             request.status === 'Rejected' ? 'bg-red-50 border-red-300 text-red-800' :
                             'border-gray-300'} 
                           focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
                         <option value="Pending Review">Menunggu Review</option>
-                        <option value="In Progress">Sedang Dikerjakan</option>
-                        <option value="Already Generated">Sudah Dibuat</option>
-                        <option value="Completed">Selesai</option>
+                        <option value="Sedang Diproses">Sedang Dikerjakan</option>
+                        <option value="Pembuatan Dokumen">Pembuatan Dokumen</option>
+                        <option value="Selesai">Selesai</option>
                         <option value="Rejected">Ditolak</option>
                       </select>
                     </td>
